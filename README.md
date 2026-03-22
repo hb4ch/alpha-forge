@@ -96,6 +96,10 @@ Alpha Forge addresses all three by treating alpha research as a **controlled exp
                                          → DONE
 ```
 
+<p align="center">
+  <img src="pipeline-illustration.png" alt="Adversarial Judge Pipeline" width="600">
+</p>
+
 ## Family Lifecycle — State Machine
 
 Every research family moves through a deterministic state machine with 20 states and 31 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`.
