@@ -1,0 +1,19 @@
+# Guardrail thresholds for evaluation
+min_sharpe: 0.5
+min_profit_factor: 1.2
+max_drawdown: 0.30
+min_win_rate: 0.35
+min_total_trades: 30
+max_concentration_share: 0.60
+
+# Robustness requirements
+cost_multiplier_tests: [2.0, 3.0]
+slippage_multiplier_tests: [2.0, 3.0]
+min_robustness_pass_rate: 0.7
+
+# Strike thresholds
+max_strikes: 3
+max_red_strikes: 2
+
+# Qualified improvement threshold (composite score delta)
+qualified_improvement_threshold: 0.05

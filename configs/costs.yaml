@@ -1,0 +1,4 @@
+# Cost assumptions for backtesting
+fee_rate: 0.001          # 10 bps per side (taker)
+slippage_bps: 5.0        # 5 bps slippage estimate
+initial_capital: 100000.0
