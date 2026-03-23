@@ -324,6 +324,98 @@ Network errors (429, 500, connection failures) during LLM calls:
 - **After 3 retries**: emit `infrastructure_failure` event, TUI shows error with `/retry` option
 - **Mid-stream failure**: partial tokens already displayed; TUI appends "[connection lost — retrying...]"
 
+## Tiered LLM Configuration
+
+### Problem
+
+Currently all agents use a hardcoded `claude-sonnet-4-20250514` with no config file. API key comes from `ANTHROPIC_API_KEY` env var. No support for custom base URLs or alternative providers.
+
+### Solution: `configs/llm.yaml`
+
+```yaml
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+    # base_url: optional, defaults to Anthropic API
+  openai:
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1  # or any OpenAI-compatible endpoint
+
+tiers:
+  heavy:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+  light:
+    provider: openai
+    model: gpt-4o-mini
+
+roles:
+  researcher: heavy          # Plan drafting, code writing — needs strong reasoning
+  seed_judge: heavy          # Subjective feasibility assessment
+  leakage_judge: light       # Mechanical check — pattern matching for leakage
+  overfit_judge: heavy       # Subjective — needs to reason about search dynamics
+  realism_judge: light       # Mechanical — checks cost/slippage assumptions
+  code_judge: light          # Mechanical — code smell detection
+  result_judge: heavy        # Subjective — evaluates result quality and promotion
+  mutation_judge: heavy      # Subjective — judges mutation discipline
+```
+
+### Implementation
+
+**New file: `alpha_forge/app/agents/llm_config.py`** (~60 lines):
+- `LLMConfig` Pydantic model that loads and validates `configs/llm.yaml`
+- `get_client_for_role(role: str) -> LLMClient` factory that returns a configured client for the given role
+- Supports both Anthropic SDK and OpenAI SDK (OpenAI-compatible endpoints)
+- Falls back to `DEFAULT_MODEL` if no config file exists (backward compatible)
+
+**Modified: `alpha_forge/app/agents/llm_client.py`**:
+- Add `provider: str` parameter ("anthropic" or "openai")
+- Add `base_url: Optional[str]` parameter
+- When provider="openai", use `openai.OpenAI(api_key=..., base_url=...)` instead of `anthropic.Anthropic()`
+- Streaming callback works with both providers (both support SSE streaming)
+
+**Modified: `alpha_forge/app/agents/base_judge.py`**:
+- Accept role name in constructor, use `get_client_for_role()` instead of raw `LLMClient()`
+
+**Modified: `alpha_forge/app/agents/researcher.py`**:
+- Use `get_client_for_role("researcher")` instead of hardcoded model
+
+**TUI integration**:
+- `/config` command shows current LLM tier assignments
+- `/tier <role> <tier>` command allows live switching (e.g., `/tier leakage_judge heavy` to upgrade a judge mid-run)
+
+### Cost rationale
+
+Typical iteration makes ~8 LLM calls: 1 researcher plan + 1 researcher code + 3 tier-1 judges + 2 tier-2 judges + 2 tier-3 judges. With tiered config:
+- Heavy (4 calls): researcher ×2, overfit_judge, result_judge, mutation_judge, seed_judge
+- Light (4 calls): leakage_judge, realism_judge, code_judge
+
+This roughly halves LLM cost per iteration while keeping reasoning quality where it matters most.
+
+## Multi-Factor Mining: Known Limitation & Mitigation
+
+### Problem
+
+The judge prompts (overfit_judge.md, mutation_judge.md) explicitly flag "stacking weak signals with tuned weights" as a strong overfitting warning sign. This conflates two different things:
+1. **Illegitimate**: combining random weak signals and tuning weights to fit historical data (p-hacking)
+2. **Legitimate**: combining mechanistically independent weak signals that diversify each other (portfolio theory)
+
+A portfolio of three uncorrelated 0.3-Sharpe signals is a legitimate ~0.9-Sharpe strategy, but the current judges can't distinguish this from overfitting.
+
+### Current mitigation
+
+- `MutationCategory.COMBINATION` exists with a budget of 1 per family
+- `signal_combiner.py` is designed for multi-factor combination
+- **Semi-auto override** in the TUI is the primary mitigation: when a judge flags a combination as suspicious, the user can override with mechanistic justification
+
+### Future improvement (not in this implementation)
+
+Tune judge prompts to ask "are these signals mechanistically independent?" rather than blanket-flagging all weak signal combinations. Add a `correlation_matrix` to the judge context so they can distinguish diversified combination from correlated stacking. This would require changes to:
+- `judges/prompts/overfit_judge.md` — add nuance to combination heuristics
+- `judges/prompts/mutation_judge.md` — same
+- `alpha_forge/engine/robustness_runner.py` — compute signal correlation matrix
+- Judge context in `family_flow.py` — pass correlation data to tier-1/tier-3 judges
+
 ## Keybindings
 
 | Key | Action |
@@ -362,7 +454,8 @@ alpha_forge/
 │   │   ├── orchestrator.py        # MODIFIED — emit events, accept EventBus
 │   │   └── family_flow.py         # MODIFIED — emit events at stage transitions
 │   ├── agents/
-│   │   └── llm_client.py          # MODIFIED — add stream_callback parameter
+│   │   ├── llm_config.py          # NEW — tiered LLM config loader, client factory
+│   │   ├── llm_client.py          # MODIFIED — multi-provider support, streaming
 │   └── domain/
 │       └── strikes.py             # MODIFIED — pattern-based strike policy
 ├── tui/                            # NEW — entire package
@@ -396,7 +489,11 @@ alpha_forge/
 | `app/events.py` | New file: EventBus with thread-safe bridging and gate mechanism | ~80 lines |
 | `app/workflow/orchestrator.py` | Accept optional `bus` param, emit events, update WAITING_STATES | ~25 lines added |
 | `app/workflow/family_flow.py` | Emit events at each stage, call `gate_for_override()` at verdict points, snapshot code to artifact store | ~50 lines added |
-| `app/agents/llm_client.py` | Add `stream_callback` param, streaming API support, retry with backoff | ~60 lines added |
+| `app/agents/llm_config.py` | New file: tiered config loader, `get_client_for_role()` factory | ~60 lines |
+| `app/agents/llm_client.py` | Multi-provider (Anthropic + OpenAI), `stream_callback`, retry with backoff | ~80 lines modified |
+| `app/agents/base_judge.py` | Accept role name, use `get_client_for_role()` | ~5 lines modified |
+| `app/agents/researcher.py` | Use `get_client_for_role("researcher")` | ~3 lines modified |
+| `configs/llm.yaml` | New file: provider/tier/role configuration | ~25 lines |
 | `app/domain/strikes.py` | Rewrite: pattern-based detection (overfit loop, death spiral), `should_pause_for_review()` replaces `should_cancel()` | ~90 lines (rewrite of 46-line file) |
 | `app/domain/models.py` | Add `overfit_flag_history`, `score_history` fields to `IdeaFamily` | ~4 lines added |
 | `app/domain/states.py` | Rename `CANCELLED_3_STRIKES` → `PAUSED_FOR_REVIEW`, add transitions from it | ~5 lines modified |
