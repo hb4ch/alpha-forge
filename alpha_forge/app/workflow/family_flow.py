@@ -20,7 +20,7 @@ from alpha_forge.app.domain.models import (
 )
 from alpha_forge.app.domain.scoring import compute_composite_score, is_qualified_improvement
 from alpha_forge.app.domain.states import FamilyState, IterationStage, Verdict
-from alpha_forge.app.domain.strikes import add_strike, reset_strikes, should_cancel
+from alpha_forge.app.domain.strikes import add_strike, reset_strikes, should_pause_for_review
 from alpha_forge.app.guards.runner import any_failed, has_red_strike, run_all_guards
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore

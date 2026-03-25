@@ -33,7 +33,7 @@ ACTIONABLE_STATES = {
 WAITING_STATES = {
     FamilyState.HUMAN_REVIEW,
     FamilyState.PAPER_FORWARD_RUNNING,
-    FamilyState.CANCELLED_3_STRIKES,
+    FamilyState.PAUSED_FOR_REVIEW,
     FamilyState.ARCHIVED_REJECTED,
     FamilyState.DONE,
 }

@@ -11,7 +11,7 @@ from typing import Any
 from alpha_forge.app.domain.events import TRANSITION_TABLE, FamilyEvent
 from alpha_forge.app.domain.models import IdeaFamily, StrikeRecord
 from alpha_forge.app.domain.states import FamilyState
-from alpha_forge.app.domain.strikes import add_strike, should_cancel
+from alpha_forge.app.domain.strikes import add_strike, should_pause_for_review
 
 
 @dataclass
@@ -31,7 +31,7 @@ class TransitionResult:
     family: IdeaFamily
     side_effects: list[SideEffect] = field(default_factory=list)
     strike_added: StrikeRecord | None = None
-    cancelled: bool = False
+    paused_for_review: bool = False
 
 
 class IllegalTransitionError(Exception):
@@ -91,12 +91,12 @@ class TransitionEngine:
                 data={"reason": ctx["strike_reason"], "is_red": is_red},
             ))
 
-        # Check if strikes trigger cancellation (overrides normal transition)
-        if should_cancel(updated_family):
-            new_state = FamilyState.CANCELLED_3_STRIKES
+        # Check if strikes trigger pause for review (overrides normal transition)
+        if should_pause_for_review(updated_family):
+            new_state = FamilyState.PAUSED_FOR_REVIEW
             updated_family = updated_family.model_copy(update={"state": new_state})
             side_effects.append(SideEffect(
-                type="family_cancelled",
+                type="family_paused_for_review",
                 data={"strike_count": updated_family.strike_count, "red_strike_count": updated_family.red_strike_count},
             ))
             return TransitionResult(
@@ -105,7 +105,7 @@ class TransitionEngine:
                 family=updated_family,
                 side_effects=side_effects,
                 strike_added=strike_added,
-                cancelled=True,
+                paused_for_review=True,
             )
 
         # Look up the transition
@@ -139,5 +139,5 @@ class TransitionEngine:
             family=updated_family,
             side_effects=side_effects,
             strike_added=strike_added,
-            cancelled=False,
+            paused_for_review=False,
         )

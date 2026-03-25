@@ -30,7 +30,7 @@ class FamilyEvent(StrEnum):
     HUMAN_APPROVED = "HUMAN_APPROVED"
     HUMAN_REJECTED = "HUMAN_REJECTED"
     ITERATE = "ITERATE"
-    CANCELLED_3_STRIKES = "CANCELLED_3_STRIKES"
+    PAUSED_FOR_REVIEW = "PAUSED_FOR_REVIEW"
 
 
 # Static transition table: (current_state, event) -> next_state
@@ -43,7 +43,7 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     # Plan review
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_APPROVED): FamilyState.PLAN_APPROVED,
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_REJECTED): FamilyState.PLAN_REVISION_REQUIRED,
-    (FamilyState.PLAN_IN_REVIEW, FamilyEvent.CANCELLED_3_STRIKES): FamilyState.CANCELLED_3_STRIKES,
+    (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Plan revision
     (FamilyState.PLAN_REVISION_REQUIRED, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
     # Plan approved -> coding
@@ -52,22 +52,22 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     # Code review
     (FamilyState.CODE_IN_REVIEW, FamilyEvent.CODE_APPROVED): FamilyState.CODE_APPROVED,
     (FamilyState.CODE_IN_REVIEW, FamilyEvent.CODE_REJECTED): FamilyState.CODE_REVISION_REQUIRED,
-    (FamilyState.CODE_IN_REVIEW, FamilyEvent.CANCELLED_3_STRIKES): FamilyState.CANCELLED_3_STRIKES,
+    (FamilyState.CODE_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Code revision
     (FamilyState.CODE_REVISION_REQUIRED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     # Code approved -> guards
     (FamilyState.CODE_APPROVED, FamilyEvent.GUARDS_PASSED): FamilyState.GUARDS_RUNNING,
     (FamilyState.GUARDS_RUNNING, FamilyEvent.GUARDS_PASSED): FamilyState.BACKTEST_RUNNING,
     (FamilyState.GUARDS_RUNNING, FamilyEvent.GUARDS_FAILED): FamilyState.QUEUED,
-    (FamilyState.GUARDS_RUNNING, FamilyEvent.CANCELLED_3_STRIKES): FamilyState.CANCELLED_3_STRIKES,
+    (FamilyState.GUARDS_RUNNING, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Backtest
     (FamilyState.BACKTEST_RUNNING, FamilyEvent.BACKTEST_COMPLETED): FamilyState.RESULTS_IN_REVIEW,
-    (FamilyState.BACKTEST_RUNNING, FamilyEvent.CANCELLED_3_STRIKES): FamilyState.CANCELLED_3_STRIKES,
+    (FamilyState.BACKTEST_RUNNING, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Results review
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.RESULT_APPROVED): FamilyState.PROMOTE_TO_HOLDOUT,
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.ITERATE): FamilyState.ITERATE,
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.RESULT_REJECTED): FamilyState.ARCHIVED_REJECTED,
-    (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.CANCELLED_3_STRIKES): FamilyState.CANCELLED_3_STRIKES,
+    (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Iterate -> back to queue
     (FamilyState.ITERATE, FamilyEvent.PLAN_SUBMITTED): FamilyState.QUEUED,
     # Holdout
@@ -81,4 +81,8 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     # Human review
     (FamilyState.HUMAN_REVIEW, FamilyEvent.HUMAN_APPROVED): FamilyState.DONE,
     (FamilyState.HUMAN_REVIEW, FamilyEvent.HUMAN_REJECTED): FamilyState.ARCHIVED_REJECTED,
+    # From PAUSED_FOR_REVIEW (user decides)
+    (FamilyState.PAUSED_FOR_REVIEW, FamilyEvent.ITERATE): FamilyState.QUEUED,
+    (FamilyState.PAUSED_FOR_REVIEW, FamilyEvent.HUMAN_REJECTED): FamilyState.ARCHIVED_REJECTED,
+    (FamilyState.PAUSED_FOR_REVIEW, FamilyEvent.FAMILY_CREATED): FamilyState.QUEUED,
 }
