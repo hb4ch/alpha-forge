@@ -147,3 +147,29 @@ class ArtifactStore:
         """Save strike count JSON."""
         path = self.root / "families" / family_id / "strike_count.json"
         self._atomic_write_json(path, data)
+
+    # ------------------------------------------------------------------
+    # Code snapshots (for TUI diff view)
+    # ------------------------------------------------------------------
+
+    def save_code_snapshot(
+        self,
+        family_id: str,
+        iteration: int,
+        files: dict[str, str],
+    ) -> Path:
+        """Save research code snapshot for an iteration."""
+        path = self._reports_dir(family_id) / f"iter_{iteration}_code.json"
+        self._atomic_write_json(path, files)
+        return path
+
+    def load_code_snapshot(
+        self,
+        family_id: str,
+        iteration: int,
+    ) -> dict[str, str] | None:
+        """Load research code snapshot for an iteration."""
+        path = self._reports_dir(family_id) / f"iter_{iteration}_code.json"
+        if not path.exists():
+            return None
+        return self.load_json(path)

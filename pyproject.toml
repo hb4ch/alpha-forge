@@ -17,6 +17,8 @@ dependencies = [
     "pandas>=2.1",
     "numpy>=1.24",
     "pyyaml>=6.0",
+    "textual>=0.80",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]

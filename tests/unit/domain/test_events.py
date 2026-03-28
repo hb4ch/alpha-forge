@@ -7,7 +7,6 @@ from alpha_forge.app.domain.states import FamilyState
 
 
 TERMINAL_STATES = {
-    FamilyState.CANCELLED_3_STRIKES,
     FamilyState.ARCHIVED_REJECTED,
     FamilyState.DONE,
 }
@@ -31,12 +30,6 @@ class TestTransitionTableValidity:
 class TestTerminalStatesNoOutgoing:
     """Terminal states have no outgoing transitions."""
 
-    def test_no_outgoing_from_cancelled(self) -> None:
-        outgoing = [
-            k for k in TRANSITION_TABLE if k[0] == FamilyState.CANCELLED_3_STRIKES
-        ]
-        assert outgoing == []
-
     def test_no_outgoing_from_archived_rejected(self) -> None:
         outgoing = [
             k for k in TRANSITION_TABLE if k[0] == FamilyState.ARCHIVED_REJECTED
@@ -46,6 +39,12 @@ class TestTerminalStatesNoOutgoing:
     def test_no_outgoing_from_done(self) -> None:
         outgoing = [k for k in TRANSITION_TABLE if k[0] == FamilyState.DONE]
         assert outgoing == []
+
+    def test_paused_for_review_has_outgoing(self) -> None:
+        outgoing = [
+            k for k in TRANSITION_TABLE if k[0] == FamilyState.PAUSED_FOR_REVIEW
+        ]
+        assert len(outgoing) == 3
 
 
 class TestNonTerminalStatesHaveTransitions:

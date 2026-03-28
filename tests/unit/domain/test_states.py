@@ -6,7 +6,6 @@ from alpha_forge.app.domain.states import FamilyState
 
 
 TERMINAL_STATES = {
-    FamilyState.CANCELLED_3_STRIKES,
     FamilyState.ARCHIVED_REJECTED,
     FamilyState.DONE,
 }
@@ -17,8 +16,8 @@ NON_TERMINAL_STATES = set(FamilyState) - TERMINAL_STATES
 class TestFamilyStateIsTerminal:
     """FamilyState.is_terminal property tests."""
 
-    def test_cancelled_3_strikes_is_terminal(self) -> None:
-        assert FamilyState.CANCELLED_3_STRIKES.is_terminal is True
+    def test_paused_for_review_is_not_terminal(self) -> None:
+        assert FamilyState.PAUSED_FOR_REVIEW.is_terminal is False
 
     def test_archived_rejected_is_terminal(self) -> None:
         assert FamilyState.ARCHIVED_REJECTED.is_terminal is True
@@ -30,8 +29,8 @@ class TestFamilyStateIsTerminal:
         for state in NON_TERMINAL_STATES:
             assert state.is_terminal is False, f"{state} should not be terminal"
 
-    def test_exactly_18_non_terminal_states(self) -> None:
-        assert len(NON_TERMINAL_STATES) == 18
+    def test_exactly_19_non_terminal_states(self) -> None:
+        assert len(NON_TERMINAL_STATES) == 19
 
 
 class TestFamilyStateStrEnum:

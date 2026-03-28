@@ -20,7 +20,7 @@ from alpha_forge.app.domain.models import (
 )
 from alpha_forge.app.domain.scoring import compute_composite_score, is_qualified_improvement
 from alpha_forge.app.domain.states import FamilyState, IterationStage, Verdict
-from alpha_forge.app.domain.strikes import add_strike, reset_strikes, should_cancel
+from alpha_forge.app.domain.strikes import add_strike, reset_strikes, should_pause_for_review
 from alpha_forge.app.guards.runner import any_failed, has_red_strike, run_all_guards
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore
@@ -40,6 +40,7 @@ class FamilyFlow:
         artifact_store: ArtifactStore,
         configs_dir: str | Path = "configs",
         client: LLMClient | None = None,
+        bus=None,  # EventBus | None
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
@@ -47,6 +48,22 @@ class FamilyFlow:
         self.client = client or LLMClient()
         self.engine = TransitionEngine()
         self.researcher = ResearcherAgent(self.client)
+        self.bus = bus
+
+    def _emit(self, event: str, data: dict) -> None:
+        """Emit an event to the EventBus if available."""
+        if self.bus:
+            self.bus.emit_sync(event, data)
+
+    def _read_research_code_dict(self, family_id: str) -> dict[str, str] | None:
+        """Read all research/ files as a dict of {filename: content}."""
+        research_dir = self.store.root / "families" / family_id / "research"
+        if not research_dir.exists():
+            return None
+        files = {}
+        for py_file in sorted(research_dir.glob("*.py")):
+            files[py_file.name] = py_file.read_text()
+        return files if files else None
 
     def _read_research_code(self, family_id: str) -> str:
         """Read all research/ files as a single string."""
@@ -98,6 +115,7 @@ class FamilyFlow:
 
         # --- Step 1: Draft plan ---
         logger.info("[%s] Drafting plan...", iter_id)
+        self._emit("stage_changed", {"stage": "DRAFT_PLAN", "family_id": family_id, "iteration": iter_id})
         prior_feedback = self._get_history_context(family_id)
         plan = self.researcher.draft_plan(family, seed, prior_feedback)
         iteration = iteration.model_copy(update={
@@ -126,6 +144,10 @@ class FamilyFlow:
         self.store.write_iteration(iteration)
 
         tier1_verdict = aggregate_verdict(tier1_outputs)
+        self._emit("verdict_received", {
+            "tier": 1, "verdict": str(tier1_verdict), "outputs": [o.model_dump() for o in tier1_outputs],
+            "family_id": family_id, "iteration": iter_id,
+        })
         if tier1_verdict in (Verdict.REJECT, Verdict.REVISE):
             logger.warning("[%s] Plan rejected by tier-1 judges", iter_id)
             family = add_strike(family, iter_id, "Plan rejected by tier-1 judges")
@@ -147,9 +169,16 @@ class FamilyFlow:
 
         # --- Step 3: Write code ---
         logger.info("[%s] Researcher writing code...", iter_id)
+        self._emit("stage_changed", {"stage": "CODE_WRITE", "family_id": family_id, "iteration": iter_id})
+        # Save code snapshot before overwriting
+        old_code = self._read_research_code_dict(family_id)
+        if old_code:
+            self.artifact_store.save_code_snapshot(family_id, iter_num - 1, old_code)
         code_files = self.researcher.write_code(family, plan, prior_feedback)
         research_dir = self.store.root / "families" / family_id / "research"
         changed = self.researcher.apply_code(family_id, code_files, research_dir)
+        # Save new code snapshot
+        self.artifact_store.save_code_snapshot(family_id, iter_num, code_files)
         iteration = iteration.model_copy(update={
             "changed_files": changed,
             "stage": IterationStage.CODE_WRITE,
@@ -178,6 +207,10 @@ class FamilyFlow:
         self.store.write_iteration(iteration)
 
         tier2_verdict = aggregate_verdict(tier2_outputs)
+        self._emit("verdict_received", {
+            "tier": 2, "verdict": str(tier2_verdict), "outputs": [o.model_dump() for o in tier2_outputs],
+            "family_id": family_id, "iteration": iter_id,
+        })
         if tier2_verdict in (Verdict.REJECT, Verdict.REVISE):
             logger.warning("[%s] Code rejected by tier-2 judges", iter_id)
             result = self.engine.apply(family, FamilyEvent.CODE_REJECTED, context={
@@ -205,6 +238,10 @@ class FamilyFlow:
         })
         self.store.write_iteration(iteration)
 
+        self._emit("guards_complete", {
+            "family_id": family_id, "iteration": iter_id,
+            "results": [g.model_dump() for g in guard_results],
+        })
         if any_failed(guard_results):
             is_red = has_red_strike(guard_results)
             violations = [v for g in guard_results for v in g.violations]
@@ -236,6 +273,10 @@ class FamilyFlow:
             "backtest_results": bt_results,
         })
         self.store.write_iteration(iteration)
+        self._emit("backtest_complete", {
+            "family_id": family_id, "iteration": iter_id,
+            "results": [r.model_dump() for r in bt_results],
+        })
         self.artifact_store.save_backtest_result(
             family_id, iter_num,
             [r.model_dump() for r in bt_results],
@@ -276,6 +317,10 @@ class FamilyFlow:
         self.store.write_iteration(iteration)
 
         tier3_verdict = aggregate_verdict(tier3_outputs)
+        self._emit("verdict_received", {
+            "tier": 3, "verdict": str(tier3_verdict), "outputs": [o.model_dump() for o in tier3_outputs],
+            "family_id": family_id, "iteration": iter_id,
+        })
 
         # --- Step 9: Score and decide ---
         score = compute_composite_score(bt_results, robustness)
@@ -320,6 +365,12 @@ class FamilyFlow:
         self.store.write_iteration(iteration)
         self._write_ledger(family_id, iter_id, iteration, family)
         self._update_global_state(family)
+
+        self._emit("iteration_complete", {
+            "family_id": family_id, "iteration": iter_id,
+            "stage": str(iteration.stage), "score": score.total if score else 0.0,
+            "qualified": iteration.qualified_improvement,
+        })
 
         return iteration
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha_forge.app.domain.strikes import add_strike, should_cancel, reset_strikes
+from alpha_forge.app.domain.strikes import add_strike, should_pause_for_review, reset_strikes
 from tests.conftest import make_family
 
 
@@ -36,28 +36,28 @@ class TestAddStrike:
         assert len(family.strike_history) == 0
 
 
-class TestShouldCancel:
-    """should_cancel checks strike thresholds."""
+class TestShouldPauseForReview:
+    """should_pause_for_review checks strike thresholds."""
 
     def test_true_at_3_strikes(self) -> None:
         family = make_family(strike_count=3, red_strike_count=0)
-        assert should_cancel(family) is True
+        assert should_pause_for_review(family) is True
 
     def test_true_at_2_red_strikes(self) -> None:
         family = make_family(strike_count=2, red_strike_count=2)
-        assert should_cancel(family) is True
+        assert should_pause_for_review(family) is True
 
     def test_false_at_2_strikes_0_red(self) -> None:
         family = make_family(strike_count=2, red_strike_count=0)
-        assert should_cancel(family) is False
+        assert should_pause_for_review(family) is False
 
     def test_false_at_0_strikes(self) -> None:
         family = make_family(strike_count=0, red_strike_count=0)
-        assert should_cancel(family) is False
+        assert should_pause_for_review(family) is False
 
     def test_true_above_3_strikes(self) -> None:
         family = make_family(strike_count=5, red_strike_count=1)
-        assert should_cancel(family) is True
+        assert should_pause_for_review(family) is True
 
 
 class TestResetStrikes:

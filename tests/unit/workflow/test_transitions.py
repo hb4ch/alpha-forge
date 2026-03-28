@@ -21,7 +21,7 @@ def engine() -> TransitionEngine:
 
 
 # ---------------------------------------------------------------------------
-# 1. All 31 legal transitions produce correct next state
+# 1. All legal transitions produce correct next state
 # ---------------------------------------------------------------------------
 
 
@@ -43,7 +43,7 @@ def test_legal_transition_produces_correct_next_state(
     assert result.new_state == expected_next
     assert result.previous_state == current_state
     assert result.family.state == expected_next
-    assert result.cancelled is False
+    assert result.paused_for_review is False
 
 
 # ---------------------------------------------------------------------------
@@ -112,35 +112,35 @@ def test_red_strike_context_increments_red_count(engine: TransitionEngine) -> No
 
 
 # ---------------------------------------------------------------------------
-# 5. Cancellation override at 3 strikes
+# 5. Pause for review at 3 strikes
 # ---------------------------------------------------------------------------
 
 
-def test_cancellation_at_three_strikes(engine: TransitionEngine) -> None:
-    """Third strike must override normal transition with cancellation."""
+def test_pause_at_three_strikes(engine: TransitionEngine) -> None:
+    """Third strike must override normal transition with pause for review."""
     family = make_family(state=FamilyState.PLAN_IN_REVIEW, strike_count=2)
     ctx = {"strike_reason": "third strike", "iteration_id": "iter_3"}
 
     result = engine.apply(family, FamilyEvent.PLAN_REJECTED, context=ctx)
 
-    assert result.cancelled is True
-    assert result.new_state == FamilyState.CANCELLED_3_STRIKES
-    assert result.family.state == FamilyState.CANCELLED_3_STRIKES
+    assert result.paused_for_review is True
+    assert result.new_state == FamilyState.PAUSED_FOR_REVIEW
+    assert result.family.state == FamilyState.PAUSED_FOR_REVIEW
     assert result.family.strike_count == 3
     assert result.strike_added is not None
 
-    cancel_effects = [se for se in result.side_effects if se.type == "family_cancelled"]
-    assert len(cancel_effects) == 1
-    assert cancel_effects[0].data["strike_count"] == 3
+    pause_effects = [se for se in result.side_effects if se.type == "family_paused_for_review"]
+    assert len(pause_effects) == 1
+    assert pause_effects[0].data["strike_count"] == 3
 
 
 # ---------------------------------------------------------------------------
-# 6. Cancellation override at 2 red strikes
+# 6. Pause for review at 2 red strikes
 # ---------------------------------------------------------------------------
 
 
-def test_cancellation_at_two_red_strikes(engine: TransitionEngine) -> None:
-    """Second red strike must trigger cancellation regardless of total count."""
+def test_pause_at_two_red_strikes(engine: TransitionEngine) -> None:
+    """Second red strike must trigger pause for review regardless of total count."""
     family = make_family(
         state=FamilyState.CODE_IN_REVIEW,
         strike_count=1,
@@ -154,8 +154,8 @@ def test_cancellation_at_two_red_strikes(engine: TransitionEngine) -> None:
 
     result = engine.apply(family, FamilyEvent.CODE_REJECTED, context=ctx)
 
-    assert result.cancelled is True
-    assert result.new_state == FamilyState.CANCELLED_3_STRIKES
+    assert result.paused_for_review is True
+    assert result.new_state == FamilyState.PAUSED_FOR_REVIEW
     assert result.family.red_strike_count == 2
     assert result.strike_added is not None
     assert result.strike_added.is_red is True
@@ -213,12 +213,12 @@ def test_score_does_not_update_when_lower(engine: TransitionEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 10. Side effects always contain state_transition for legal, non-cancelled
+# 10. Side effects always contain state_transition for legal, non-paused
 # ---------------------------------------------------------------------------
 
 
 def test_side_effects_contain_state_transition(engine: TransitionEngine) -> None:
-    """Every legal non-cancelled transition must emit a state_transition side effect."""
+    """Every legal non-paused transition must emit a state_transition side effect."""
     family = make_family(state=FamilyState.QUEUED)
 
     result = engine.apply(family, FamilyEvent.PLAN_SUBMITTED)

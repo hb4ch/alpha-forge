@@ -17,3 +17,10 @@ max_red_strikes: 2
 
 # Qualified improvement threshold (composite score delta)
 qualified_improvement_threshold: 0.05
+
+resource_limits:
+  backtest_max_memory_mb: 4096
+  backtest_timeout_seconds: 300
+  duckdb_threads: 2
+  robustness_max_memory_mb: 4096
+  robustness_timeout_seconds: 600

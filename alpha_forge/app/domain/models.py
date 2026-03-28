@@ -330,6 +330,8 @@ class IdeaFamily(BaseModel):
     best_qualified_score: float = 0.0
     current_iteration: int = 0
     failure_taxonomy: list[str] = Field(default_factory=list)
+    overfit_flag_history: list[str] = Field(default_factory=list)
+    score_history: list[float] = Field(default_factory=list)
     editable_files: list[str] = Field(default_factory=lambda: [
         "research/features.py",
         "research/labels.py",

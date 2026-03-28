@@ -24,14 +24,13 @@ class FamilyState(StrEnum):
     PROMOTE_TO_PAPER = "PROMOTE_TO_PAPER"
     PAPER_FORWARD_RUNNING = "PAPER_FORWARD_RUNNING"
     HUMAN_REVIEW = "HUMAN_REVIEW"
-    CANCELLED_3_STRIKES = "CANCELLED_3_STRIKES"
+    PAUSED_FOR_REVIEW = "PAUSED_FOR_REVIEW"
     ARCHIVED_REJECTED = "ARCHIVED_REJECTED"
     DONE = "DONE"
 
     @property
     def is_terminal(self) -> bool:
         return self in {
-            FamilyState.CANCELLED_3_STRIKES,
             FamilyState.ARCHIVED_REJECTED,
             FamilyState.DONE,
         }
