@@ -1,0 +1,92 @@
+/* Alpha Forge TUI Theme — IDE-style layout */
+Screen {
+    background: $surface;
+}
+
+#sidebar {
+    width: 26;
+    border-right: solid $primary;
+    padding: 1;
+}
+
+#main-area {
+    width: 1fr;
+}
+
+#conversation {
+    height: 2fr;
+    border-bottom: solid $primary;
+}
+
+#bottom-tabs {
+    height: 1fr;
+}
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: $primary;
+    color: $text;
+}
+
+.pipeline-step {
+    height: 1;
+}
+
+.pipeline-step.completed {
+    color: $success;
+}
+
+.pipeline-step.active {
+    color: $warning;
+}
+
+.pipeline-step.pending {
+    color: $text-muted;
+}
+
+.verdict-approve {
+    color: $success;
+}
+
+.verdict-approve-constraints {
+    color: $warning;
+}
+
+.verdict-revise {
+    color: #f0883e;
+}
+
+.verdict-reject {
+    color: $error;
+}
+
+.mode-autopilot {
+    background: $primary;
+    color: $text;
+}
+
+.mode-semi-auto {
+    background: #f0883e;
+    color: $text;
+}
+
+.strike-active {
+    color: $error;
+}
+
+.strike-inactive {
+    color: $text-muted;
+}
+
+.risk-low {
+    color: $success;
+}
+
+.risk-medium {
+    color: $warning;
+}
+
+.risk-high {
+    color: $error;
+}
