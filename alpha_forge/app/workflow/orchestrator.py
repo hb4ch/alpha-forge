@@ -51,13 +51,24 @@ class Orchestrator:
         configs_dir: str | Path = "configs",
         client: LLMClient | None = None,
         max_iterations: int = MAX_ITERATIONS,
+        bus=None,  # EventBus | None
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
         self.configs_dir = Path(configs_dir).resolve()
         self.client = client or LLMClient()
         self.max_iterations = max_iterations
-        self.flow = FamilyFlow(store, artifact_store, configs_dir, self.client)
+        self.bus = bus
+        self.flow = FamilyFlow(store, artifact_store, configs_dir, self.client, bus=bus)
+        self._paused = False
+
+    def pause(self) -> None:
+        """Request loop pause at next iteration boundary."""
+        self._paused = True
+
+    def resume(self) -> None:
+        """Clear the pause flag."""
+        self._paused = False
 
     def run(self, family_id: str | None = None) -> dict[str, Any]:
         """Run the orchestrator loop for a family.
@@ -80,6 +91,11 @@ class Orchestrator:
         results: list[dict[str, Any]] = []
 
         while iterations_run < self.max_iterations:
+            if self._paused:
+                if self.bus:
+                    self.bus.emit_sync("loop_paused", {"family_id": family_id})
+                break
+
             family = self.store.read_family(family_id)
 
             if family.state.is_terminal:
