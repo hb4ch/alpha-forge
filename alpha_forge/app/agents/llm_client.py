@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 import anthropic
 
@@ -15,11 +15,30 @@ MAX_RETRIES = 2
 
 
 class LLMClient:
-    """Claude API client for structured judge/researcher calls."""
+    """Multi-provider LLM client for judge and researcher calls."""
 
-    def __init__(self, model: str = DEFAULT_MODEL) -> None:
-        self.client = anthropic.Anthropic()
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        provider: str = "anthropic",
+        base_url: str | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> None:
         self.model = model
+        self.provider = provider
+        self.stream_callback = stream_callback
+
+        if provider == "openai":
+            import openai
+
+            kwargs: dict[str, Any] = {}
+            if base_url:
+                kwargs["base_url"] = base_url
+            self.openai_client = openai.OpenAI(**kwargs)
+            self.anthropic_client = None
+        else:
+            self.anthropic_client = anthropic.Anthropic()
+            self.openai_client = None
 
     def call(
         self,
@@ -29,7 +48,18 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         """Make a raw API call and return the text response."""
-        response = self.client.messages.create(
+        if self.provider == "openai":
+            return self._call_openai(system, user_prompt, max_tokens, temperature)
+        return self._call_anthropic(system, user_prompt, max_tokens, temperature)
+
+    def _call_anthropic(
+        self,
+        system: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        response = self.anthropic_client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -37,6 +67,24 @@ class LLMClient:
             messages=[{"role": "user", "content": user_prompt}],
         )
         return response.content[0].text
+
+    def _call_openai(
+        self,
+        system: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        response = self.openai_client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content
 
     def call_json(
         self,

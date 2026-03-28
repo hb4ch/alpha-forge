@@ -16,14 +16,16 @@ from alpha_forge.app.domain.models import IdeaFamily, SeedCard
 
 logger = logging.getLogger(__name__)
 
-RESEARCHER_MODEL = "claude-sonnet-4-20250514"
-
-
 class ResearcherAgent:
     """Agent that drafts plans and writes research code."""
 
     def __init__(self, client: LLMClient | None = None) -> None:
-        self.client = client or LLMClient(model=RESEARCHER_MODEL)
+        if client:
+            self.client = client
+        else:
+            from alpha_forge.app.agents.llm_config import get_client_for_role
+
+            self.client = get_client_for_role("researcher")
 
     def draft_plan(
         self,
