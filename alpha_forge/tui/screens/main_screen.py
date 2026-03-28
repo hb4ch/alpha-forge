@@ -42,14 +42,17 @@ class StatusBar(Static):
     """Bottom status bar showing mode and keybindings."""
 
     def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
+        super().__init__(
+            "[bold white on blue] AUTOPILOT [/] [dim]Shift+Tab: Toggle mode │ Tab: Focus │ 1-5: Tabs │ /: Command │ q: Quit[/]",
+            **kwargs,
+        )
         self._mode = "autopilot"
 
     def set_mode(self, mode: str) -> None:
         self._mode = mode
-        self._render()
+        self._refresh_content()
 
-    def _render(self) -> None:
+    def _refresh_content(self) -> None:
         if self._mode == "autopilot":
             badge = "[bold white on blue] AUTOPILOT [/]"
         else:
@@ -57,6 +60,3 @@ class StatusBar(Static):
         self.update(
             f"{badge} [dim]Shift+Tab: Toggle mode │ Tab: Focus │ 1-5: Tabs │ /: Command │ q: Quit[/]"
         )
-
-    def on_mount(self) -> None:
-        self._render()

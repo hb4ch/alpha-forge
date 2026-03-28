@@ -23,8 +23,8 @@ PIPELINE_STEPS = [
 class PipelineView(Static):
     """Shows iteration stages as a vertical checklist."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._current_stage: IterationStage | None = None
 
     def update_stage(self, stage: IterationStage) -> None:

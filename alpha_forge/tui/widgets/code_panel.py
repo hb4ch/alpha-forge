@@ -20,13 +20,13 @@ class CodePanel(RichLog):
     def update_code(self, current: dict[str, str], previous: dict[str, str] | None = None) -> None:
         self._current_code = current
         self._previous_code = previous or {}
-        self._render()
+        self._refresh_view()
 
     def toggle_diff(self) -> None:
         self._show_diff = not self._show_diff
-        self._render()
+        self._refresh_view()
 
-    def _render(self) -> None:
+    def _refresh_view(self) -> None:
         self.clear()
         if self._show_diff and self._previous_code:
             self._render_diff()
