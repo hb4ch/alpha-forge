@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 from pydantic import ValidationError
 
@@ -11,6 +13,7 @@ from alpha_forge.app.domain.models import (
     JudgeOutput,
     LeakageJudgeOutput,
     MutationBudget,
+    Iteration,
     OverfitJudgeOutput,
     RealismJudgeOutput,
     CodeJudgeOutput,
@@ -18,6 +21,8 @@ from alpha_forge.app.domain.models import (
     MutationJudgeOutput,
     RobustnessResult,
     RobustnessTest,
+    SeedCard,
+    StrikeRecord,
 )
 from alpha_forge.app.domain.states import MutationCategory
 from tests.conftest import make_family, make_robustness
@@ -160,3 +165,31 @@ class TestJudgeSubclassDefaults:
 
     def test_mutation_default(self) -> None:
         assert MutationJudgeOutput().judge_type == "mutation"
+
+
+class TestUtcDefaults:
+    """Model timestamp defaults should be timezone-aware and warning-free."""
+
+    def test_timestamp_defaults_do_not_emit_utcnow_deprecation(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            SeedCard(
+                seed_id="seed_1",
+                seed_type="paper",
+                source_title="source",
+                raw_claim="claim",
+                market="crypto_spot",
+                horizon="5min",
+                mechanism="mechanism",
+                testable_hypothesis="hypothesis",
+            )
+            StrikeRecord(iteration_id="iter_1", reason="reason")
+            Iteration(iteration_id="iter_1", family_id="fam_1")
+            IdeaFamily(
+                family_id="fam_1",
+                seed_id="seed_1",
+                base_hypothesis="hypothesis",
+                mechanism="mechanism",
+            )
+
+        assert not any("utcnow" in str(w.message) for w in caught)

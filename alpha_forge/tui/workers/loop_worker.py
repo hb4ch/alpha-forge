@@ -39,7 +39,8 @@ class LoopWorker:
         """Run the orchestrator loop. Called from a worker thread."""
         store = MarkdownStore(self.workspace)
         artifact_store = ArtifactStore(self.workspace)
-        client = LLMClient()
+        from alpha_forge.app.agents.llm_config import get_client_for_role
+        client = get_client_for_role("researcher")
 
         self.orchestrator = Orchestrator(
             store=store,
@@ -50,10 +51,16 @@ class LoopWorker:
             bus=self.bus,
         )
 
-        self.bus.emit_sync("loop_started", {"family_id": self.family_id})
+        # Resolve family ID from STATE.md if not provided
+        family_id = self.family_id
+        if family_id is None:
+            global_state = store.read_global_state()
+            family_id = global_state.get("active_family")
+
+        self.bus.emit_sync("loop_started", {"family_id": family_id})
 
         try:
-            result = self.orchestrator.run(self.family_id)
+            result = self.orchestrator.run(family_id)
             self.bus.emit_sync("loop_finished", result)
             return result
         except Exception as e:

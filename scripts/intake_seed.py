@@ -42,8 +42,10 @@ def main(text: str, source: str, workspace: str, auto_create: bool) -> None:
     verdict = screen_seed(seed_id, store)
     click.echo(f"  Verdict: {verdict.verdict}")
     click.echo(f"  Reasoning: {verdict.reasoning_summary}")
-    if verdict.risk_flags:
-        click.echo(f"  Risk flags: {', '.join(verdict.risk_flags)}")
+    if verdict.must_fix:
+        click.echo(f"  Must fix: {', '.join(verdict.must_fix)}")
+    if verdict.recommended_narrowing:
+        click.echo(f"  Narrowing: {', '.join(verdict.recommended_narrowing)}")
 
     # Step 4: Create family (optional)
     if auto_create and verdict.verdict.value.startswith("accept"):

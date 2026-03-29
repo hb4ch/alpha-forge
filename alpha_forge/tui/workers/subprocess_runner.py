@@ -19,6 +19,28 @@ class SubprocessResult:
     failure_type: str | None = None  # "infrastructure" or "research"
 
 
+def _subprocess_worker(
+    q: multiprocessing.queues.Queue,
+    fn: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    duckdb_threads: int | None,
+    max_memory_mb: int | None,
+) -> None:
+    """Run a callable in a child process and report the result via a queue."""
+    try:
+        if duckdb_threads:
+            os.environ["DUCKDB_THREADS"] = str(duckdb_threads)
+        if max_memory_mb:
+            os.environ["DUCKDB_MEMORY_LIMIT"] = f"{max_memory_mb}MB"
+        result = fn(*args, **kwargs)
+        q.put(("success", result))
+    except MemoryError as e:
+        q.put(("infrastructure", str(e)))
+    except Exception as e:
+        q.put(("research", f"{type(e).__name__}: {e}"))
+
+
 class SubprocessRunner:
     """Runs functions in child processes with resource limits."""
 
@@ -31,27 +53,31 @@ class SubprocessRunner:
         self.timeout_seconds = timeout_seconds
         self.max_memory_mb = max_memory_mb
         self.duckdb_threads = duckdb_threads
+        self._ctx = multiprocessing.get_context("spawn")
 
     def run(self, fn: Callable, args: tuple = (), kwargs: dict | None = None) -> SubprocessResult:
         """Run fn(*args, **kwargs) in a child process."""
         kwargs = kwargs or {}
-        result_queue: multiprocessing.Queue = multiprocessing.Queue()
-
-        def _worker(q, f, a, kw):
-            try:
-                if self.duckdb_threads:
-                    os.environ["DUCKDB_THREADS"] = str(self.duckdb_threads)
-                if self.max_memory_mb:
-                    os.environ["DUCKDB_MEMORY_LIMIT"] = f"{self.max_memory_mb}MB"
-                result = f(*a, **kw)
-                q.put(("success", result))
-            except MemoryError as e:
-                q.put(("infrastructure", str(e)))
-            except Exception as e:
-                q.put(("research", f"{type(e).__name__}: {e}"))
-
-        process = multiprocessing.Process(target=_worker, args=(result_queue, fn, args, kwargs))
-        process.start()
+        result_queue = self._ctx.Queue()
+        process = self._ctx.Process(
+            target=_subprocess_worker,
+            args=(
+                result_queue,
+                fn,
+                args,
+                kwargs,
+                self.duckdb_threads,
+                self.max_memory_mb,
+            ),
+        )
+        try:
+            process.start()
+        except Exception as e:
+            return SubprocessResult(
+                success=False,
+                error=f"Failed to start subprocess: {type(e).__name__}: {e}",
+                failure_type="infrastructure",
+            )
         process.join(timeout=self.timeout_seconds)
 
         if process.is_alive():

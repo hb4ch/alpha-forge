@@ -13,12 +13,13 @@ class EventBus:
     The EventBus bridges the synchronous worker thread (orchestrator) to
     the async Textual event loop. Key design:
     - emit(): for async callers (TUI side)
-    - emit_sync(): for worker thread, uses call_soon_threadsafe
+    - emit_sync(): for worker thread, uses Textual's call_from_thread
     - gate_for_override(): blocks worker thread until TUI user decides
     """
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, app=None) -> None:
         self._loop = loop
+        self._app = app  # Textual App instance for call_from_thread
         self._subscribers: dict[str, list[Callable]] = defaultdict(list)
         self._gate: threading.Event | None = None
         self._gate_decision: dict[str, Any] | None = None
@@ -36,11 +37,18 @@ class EventBus:
     def emit_sync(self, event: str, data: dict[str, Any]) -> None:
         """Emit an event from a worker thread.
 
-        Uses loop.call_soon_threadsafe() to schedule callbacks
-        on the Textual event loop.
+        Always notifies local subscribers immediately. If a Textual app is
+        attached, also posts a BusEvent for the TUI message pump.
         """
-        for cb in self._subscribers.get(event, []):
-            self._loop.call_soon_threadsafe(cb, data)
+        for cb in list(self._subscribers.get(event, [])):
+            cb(data)
+
+        if self._app is not None:
+            from alpha_forge.tui.app import BusEvent
+            try:
+                self._app.post_message(BusEvent(event, data))
+            except Exception:
+                pass  # App shutting down
 
     def gate_for_override(self, context: dict[str, Any]) -> dict[str, Any] | None:
         """Block worker thread until TUI user makes an override decision.

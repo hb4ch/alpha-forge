@@ -1,12 +1,9 @@
-# Data split configuration
-# Auto-populated by init_workspace.py from available data range (60/20/20)
-# DO NOT modify during active research iterations
-train:
-  start: "2024-01-01"
-  end: "2025-06-01"
-validation:
-  start: "2025-06-01"
-  end: "2025-10-01"
 holdout:
-  start: "2025-10-01"
-  end: "2026-03-01"
+  end: '2026-03-01'
+  start: '2025-07-24'
+train:
+  end: '2024-12-17'
+  start: '2023-03-01'
+validation:
+  end: '2025-07-24'
+  start: '2024-12-17'

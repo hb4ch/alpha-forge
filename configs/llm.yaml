@@ -1,17 +1,17 @@
 providers:
-  anthropic:
-    api_key_env: ANTHROPIC_API_KEY
-  openai:
-    api_key_env: OPENAI_API_KEY
-    base_url: https://api.openai.com/v1
-
+  bigmodel:
+    api_key_env: BIGMODEL_API_KEY
+    base_url: https://open.bigmodel.cn/api/coding/paas/v4
+  dgx_spark:
+    api_key_env: DGX_SPARK_API_KEY
+    base_url: http://192.168.3.46:8000/v1
 tiers:
   heavy:
-    provider: anthropic
-    model: claude-sonnet-4-20250514
+    provider: bigmodel
+    model: GLM-5.1
   light:
-    provider: openai
-    model: gpt-4o-mini
+    provider: dgx_spark
+    model: qwen3.5-35B-A3B
 
 roles:
   researcher: heavy

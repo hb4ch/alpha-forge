@@ -162,17 +162,17 @@ def test_pause_at_two_red_strikes(engine: TransitionEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. ITERATE event increments current_iteration
+# 7. ITERATE event does not mutate current_iteration
 # ---------------------------------------------------------------------------
 
 
-def test_iterate_increments_current_iteration(engine: TransitionEngine) -> None:
-    """ITERATE event must bump current_iteration by 1."""
+def test_iterate_does_not_increment_current_iteration(engine: TransitionEngine) -> None:
+    """ITERATE bookkeeping belongs to FamilyFlow, not TransitionEngine."""
     family = make_family(state=FamilyState.RESULTS_IN_REVIEW, current_iteration=3)
 
     result = engine.apply(family, FamilyEvent.ITERATE)
 
-    assert result.family.current_iteration == 4
+    assert result.family.current_iteration == 3
     assert result.new_state == FamilyState.ITERATE
 
 

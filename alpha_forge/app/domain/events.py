@@ -44,10 +44,11 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_APPROVED): FamilyState.PLAN_APPROVED,
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_REJECTED): FamilyState.PLAN_REVISION_REQUIRED,
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
-    # Plan revision
+    # Plan revision / re-entry
     (FamilyState.PLAN_REVISION_REQUIRED, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
+    (FamilyState.ITERATE, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
     # Plan approved -> coding
-    (FamilyState.PLAN_APPROVED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODING,
+    (FamilyState.PLAN_APPROVED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     (FamilyState.CODING, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     # Code review
     (FamilyState.CODE_IN_REVIEW, FamilyEvent.CODE_APPROVED): FamilyState.CODE_APPROVED,
@@ -55,8 +56,10 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     (FamilyState.CODE_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     # Code revision
     (FamilyState.CODE_REVISION_REQUIRED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
-    # Code approved -> guards
-    (FamilyState.CODE_APPROVED, FamilyEvent.GUARDS_PASSED): FamilyState.GUARDS_RUNNING,
+    # Code approved -> guards/backtest
+    (FamilyState.CODE_APPROVED, FamilyEvent.GUARDS_PASSED): FamilyState.BACKTEST_RUNNING,
+    (FamilyState.CODE_APPROVED, FamilyEvent.GUARDS_FAILED): FamilyState.QUEUED,
+    (FamilyState.CODE_APPROVED, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
     (FamilyState.GUARDS_RUNNING, FamilyEvent.GUARDS_PASSED): FamilyState.BACKTEST_RUNNING,
     (FamilyState.GUARDS_RUNNING, FamilyEvent.GUARDS_FAILED): FamilyState.QUEUED,
     (FamilyState.GUARDS_RUNNING, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
@@ -68,8 +71,6 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.ITERATE): FamilyState.ITERATE,
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.RESULT_REJECTED): FamilyState.ARCHIVED_REJECTED,
     (FamilyState.RESULTS_IN_REVIEW, FamilyEvent.PAUSED_FOR_REVIEW): FamilyState.PAUSED_FOR_REVIEW,
-    # Iterate -> back to queue
-    (FamilyState.ITERATE, FamilyEvent.PLAN_SUBMITTED): FamilyState.QUEUED,
     # Holdout
     (FamilyState.PROMOTE_TO_HOLDOUT, FamilyEvent.PROMOTE_HOLDOUT): FamilyState.HOLDOUT_RUNNING,
     (FamilyState.HOLDOUT_RUNNING, FamilyEvent.HOLDOUT_PASSED): FamilyState.PROMOTE_TO_PAPER,

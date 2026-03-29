@@ -56,7 +56,10 @@ class Orchestrator:
         self.store = store
         self.artifact_store = artifact_store
         self.configs_dir = Path(configs_dir).resolve()
-        self.client = client or LLMClient()
+        if client is None:
+            from alpha_forge.app.agents.llm_config import get_client_for_role
+            client = get_client_for_role("researcher")
+        self.client = client
         self.max_iterations = max_iterations
         self.bus = bus
         self.flow = FamilyFlow(store, artifact_store, configs_dir, self.client, bus=bus)
@@ -127,6 +130,22 @@ class Orchestrator:
                 self.store.write_family(family)
                 results.append({"step": "paper_forward", "status": "stub_passed"})
                 continue
+
+            # Mid-iteration states from a crashed/aborted run — reset to QUEUED
+            MID_ITERATION_STATES = {
+                FamilyState.PLAN_IN_REVIEW,
+                FamilyState.PLAN_APPROVED,
+                FamilyState.CODE_IN_REVIEW,
+                FamilyState.CODE_APPROVED,
+                FamilyState.BACKTEST_RUNNING,
+            }
+            if family.state in MID_ITERATION_STATES:
+                logger.warning(
+                    "Family %s in mid-iteration state %s, resetting to QUEUED",
+                    family_id, family.state,
+                )
+                family = family.model_copy(update={"state": FamilyState.QUEUED})
+                self.store.write_family(family)
 
             if family.state in (FamilyState.QUEUED, FamilyState.ITERATE,
                                 FamilyState.PLAN_REVISION_REQUIRED,

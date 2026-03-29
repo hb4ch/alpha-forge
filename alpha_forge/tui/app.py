@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.app import App
 from textual.binding import Binding
+from textual.message import Message
 
 from alpha_forge.app.domain.states import IterationStage
 from alpha_forge.app.event_bus import EventBus
@@ -21,10 +22,20 @@ from alpha_forge.tui.widgets.override_modal import OverrideModal
 from alpha_forge.tui.widgets.state_sidebar import StateSidebar
 from alpha_forge.tui.widgets.verdicts_panel import VerdictsPanel
 from alpha_forge.tui.workers.loop_worker import LoopWorker
+from alpha_forge.tui.rendering import normalize_verdict_output
 
 logger = logging.getLogger(__name__)
 
 CSS_PATH = Path(__file__).parent / "styles" / "theme.tcss"
+
+
+class BusEvent(Message):
+    """Thread-safe bridge: posted from worker thread via post_message."""
+
+    def __init__(self, event_name: str, data: dict) -> None:
+        super().__init__()
+        self.event_name = event_name
+        self.data = data
 
 
 class AlphaForgeApp(App):
@@ -67,20 +78,9 @@ class AlphaForgeApp(App):
         yield MainScreen()
 
     def on_mount(self) -> None:
-        # Set up EventBus
+        # Set up EventBus — use post_message for thread-safe delivery
         loop = asyncio.get_event_loop()
-        self._bus = EventBus(loop)
-
-        # Subscribe to events
-        self._bus.subscribe("stage_changed", self._on_stage_changed)
-        self._bus.subscribe("verdict_received", self._on_verdict_received)
-        self._bus.subscribe("guards_complete", self._on_guards_complete)
-        self._bus.subscribe("backtest_complete", self._on_backtest_complete)
-        self._bus.subscribe("iteration_complete", self._on_iteration_complete)
-        self._bus.subscribe("verdict_awaiting_override", self._on_override_needed)
-        self._bus.subscribe("loop_started", self._on_loop_started)
-        self._bus.subscribe("loop_finished", self._on_loop_finished)
-        self._bus.subscribe("loop_error", self._on_loop_error)
+        self._bus = EventBus(loop, app=self)
 
         # Install log handler
         log_panel = self.query_one("#log-panel", LogPanel)
@@ -88,6 +88,119 @@ class AlphaForgeApp(App):
 
         # Start the orchestrator loop
         self._start_loop()
+
+    def on_bus_event(self, event: BusEvent) -> None:
+        """Handle all events from the worker thread via Textual's message pump."""
+        handler = self._event_handlers.get(event.event_name)
+        if handler:
+            handler(self, event.data)
+
+    @staticmethod
+    def _dispatch_stage_changed(app: "AlphaForgeApp", data: dict) -> None:
+        stage_str = data.get("stage", "")
+        try:
+            stage = IterationStage(stage_str)
+            app.query_one("#sidebar", StateSidebar).update_stage(stage)
+        except ValueError:
+            pass
+        detail = data.get("detail", "")
+        msg = f"Stage: {stage_str}" + (f" — {detail}" if detail else "")
+        app.query_one("#conversation", ConversationStream).add_system_message(msg)
+
+    @staticmethod
+    def _dispatch_verdict_received(app: "AlphaForgeApp", data: dict) -> None:
+        conv = app.query_one("#conversation", ConversationStream)
+        for output in data.get("outputs", []):
+            display = normalize_verdict_output(output)
+            conv.add_verdict(
+                display.judge,
+                display.verdict,
+                display.reasoning,
+                display.must_fix,
+            )
+        verdicts = app.query_one("#verdicts-panel", VerdictsPanel)
+        verdicts.update_verdicts(data.get("outputs", []))
+
+    @staticmethod
+    def _dispatch_guards_complete(app: "AlphaForgeApp", data: dict) -> None:
+        app.query_one("#guards-panel", GuardsPanel).update_guards(data.get("results", []))
+
+    @staticmethod
+    def _dispatch_backtest_complete(app: "AlphaForgeApp", data: dict) -> None:
+        app.query_one("#metrics-panel", MetricsPanel).update_metrics(data.get("results", []))
+
+    @staticmethod
+    def _dispatch_iteration_complete(app: "AlphaForgeApp", data: dict) -> None:
+        score = data.get("score", 0)
+        qualified = data.get("qualified", False)
+        app.query_one("#conversation", ConversationStream).add_system_message(
+            f"Iteration complete. Score: {score:.3f} {'✓ Qualified' if qualified else '✗ Not qualified'}"
+        )
+
+    @staticmethod
+    def _dispatch_override_needed(app: "AlphaForgeApp", data: dict) -> None:
+        if app._mode != "semi_auto":
+            return
+        modal = OverrideModal(
+            judge_type=data.get("judge", ""),
+            verdict=data.get("verdict", ""),
+            reasoning=data.get("reasoning_summary") or data.get("reasoning", ""),
+        )
+        def handle_decision(decision: dict | None) -> None:
+            if decision and app._bus:
+                app._bus.release_gate(decision)
+        app.push_screen(modal, handle_decision)
+
+    @staticmethod
+    def _dispatch_loop_started(app: "AlphaForgeApp", data: dict) -> None:
+        app.query_one("#conversation", ConversationStream).add_system_message(
+            f"Loop started for family: {data.get('family_id', 'auto')}"
+        )
+
+    @staticmethod
+    def _dispatch_loop_finished(app: "AlphaForgeApp", data: dict) -> None:
+        app.query_one("#conversation", ConversationStream).add_system_message(
+            f"Loop finished. Final state: {data.get('final_state', 'unknown')}"
+        )
+
+    @staticmethod
+    def _dispatch_loop_error(app: "AlphaForgeApp", data: dict) -> None:
+        app.query_one("#conversation", ConversationStream).add_system_message(
+            f"Loop error: {data.get('error', 'unknown')}"
+        )
+
+    @staticmethod
+    def _dispatch_llm_start(app: "AlphaForgeApp", data: dict) -> None:
+        role = data.get("role", "LLM")
+        task = data.get("task", "")
+        conv = app.query_one("#conversation", ConversationStream)
+        conv.begin_streaming(role, task)
+
+    @staticmethod
+    def _dispatch_llm_token(app: "AlphaForgeApp", data: dict) -> None:
+        conv = app.query_one("#conversation", ConversationStream)
+        conv.add_researcher_token(data.get("token", ""))
+
+    @staticmethod
+    def _dispatch_llm_end(app: "AlphaForgeApp", data: dict) -> None:
+        conv = app.query_one("#conversation", ConversationStream)
+        conv.end_streaming()
+        conv.add_system_message(f"── {data.get('role', 'LLM')} done ──")
+
+    _event_handlers = {
+        "stage_changed": _dispatch_stage_changed,
+        "verdict_received": _dispatch_verdict_received,
+        "guards_complete": _dispatch_guards_complete,
+        "backtest_complete": _dispatch_backtest_complete,
+        "iteration_complete": _dispatch_iteration_complete,
+        "verdict_awaiting_override": _dispatch_override_needed,
+        "loop_started": _dispatch_loop_started,
+        "loop_finished": _dispatch_loop_finished,
+        "loop_error": _dispatch_loop_error,
+        "llm_start": _dispatch_llm_start,
+        "llm_token": _dispatch_llm_token,
+        "llm_end": _dispatch_llm_end,
+    }
 
     def _start_loop(self) -> None:
         self._worker = LoopWorker(
@@ -97,76 +210,22 @@ class AlphaForgeApp(App):
             family_id=self.family_id,
             max_iterations=self.max_iterations,
         )
-        self.run_worker(self._worker.run, thread=True)
+        self.run_worker(self._worker.run, thread=True, group="loop")
 
-    # --- Event handlers ---
-
-    def _on_stage_changed(self, data: dict) -> None:
-        stage_str = data.get("stage", "")
-        try:
-            stage = IterationStage(stage_str)
-            self.query_one("#sidebar", StateSidebar).update_stage(stage)
-        except ValueError:
-            pass
-        conv = self.query_one("#conversation", ConversationStream)
-        conv.add_system_message(f"Stage: {stage_str}")
-
-    def _on_verdict_received(self, data: dict) -> None:
-        conv = self.query_one("#conversation", ConversationStream)
-        for output in data.get("outputs", []):
-            conv.add_verdict(
-                output.get("judge_type", ""),
-                output.get("verdict", ""),
-                output.get("reasoning", ""),
-                output.get("must_fix", []),
-            )
-        # Update verdicts panel
-        verdicts = self.query_one("#verdicts-panel", VerdictsPanel)
-        verdicts.update_verdicts(data.get("outputs", []))
-
-    def _on_guards_complete(self, data: dict) -> None:
-        guards = self.query_one("#guards-panel", GuardsPanel)
-        guards.update_guards(data.get("results", []))
-
-    def _on_backtest_complete(self, data: dict) -> None:
-        metrics = self.query_one("#metrics-panel", MetricsPanel)
-        results = data.get("results", [])
-        metrics.update_metrics(results)
-
-    def _on_iteration_complete(self, data: dict) -> None:
-        conv = self.query_one("#conversation", ConversationStream)
-        score = data.get("score", 0)
-        qualified = data.get("qualified", False)
-        conv.add_system_message(
-            f"Iteration complete. Score: {score:.3f} {'✓ Qualified' if qualified else '✗ Not qualified'}"
-        )
-
-    def _on_override_needed(self, data: dict) -> None:
-        if self._mode != "semi_auto":
-            return
-        modal = OverrideModal(
-            judge_type=data.get("judge", ""),
-            verdict=data.get("verdict", ""),
-            reasoning=data.get("reasoning", ""),
-        )
-
-        def handle_decision(decision: dict | None) -> None:
-            if decision and self._bus:
-                self._bus.release_gate(decision)
-
-        self.push_screen(modal, handle_decision)
-
-    def _on_loop_started(self, data: dict) -> None:
-        conv = self.query_one("#conversation", ConversationStream)
-        conv.add_system_message(f"Loop started for family: {data.get('family_id', 'auto')}")
-
-    def _on_loop_finished(self, data: dict) -> None:
-        conv = self.query_one("#conversation", ConversationStream)
-        conv.add_system_message(f"Loop finished. Final state: {data.get('final_state', 'unknown')}")
-
-    def _on_loop_error(self, data: dict) -> None:
-        conv = self.query_one("#conversation", ConversationStream)
-        conv.add_system_message(f"Loop error: {data.get('error', 'unknown')}")
+    def on_worker_state_changed(self, event) -> None:
+        """Catch worker crashes and display them."""
+        from textual.worker import WorkerState
+        if event.state == WorkerState.ERROR:
+            error = event.worker.error
+            msg = f"Worker crashed: {type(error).__name__}: {error}"
+            logger.error(msg, exc_info=error)
+            try:
+                self.query_one("#conversation", ConversationStream).add_system_message(
+                    msg,
+                    style="bold red",
+                )
+            except Exception:
+                pass
 
     # --- Actions ---
 

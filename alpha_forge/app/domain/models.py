@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -24,6 +24,11 @@ from alpha_forge.app.domain.states import (
 # ---------------------------------------------------------------------------
 
 
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(tz=timezone.utc)
+
+
 class SeedCard(BaseModel):
     """Structured research card distilled from a raw seed."""
 
@@ -38,7 +43,7 @@ class SeedCard(BaseModel):
     testable_hypothesis: str
     ambiguities: list[str] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +274,7 @@ class StrikeRecord(BaseModel):
     iteration_id: str
     reason: str
     is_red: bool = False
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +300,7 @@ class Iteration(BaseModel):
     qualified_improvement: bool = False
     strikes_added: list[StrikeRecord] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +350,7 @@ class IdeaFamily(BaseModel):
         "judges/prompts/*",
         "reports/*",
     ])
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
     @model_validator(mode="after")
     def validate_strikes(self) -> IdeaFamily:

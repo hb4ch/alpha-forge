@@ -19,6 +19,7 @@ from alpha_forge.engine.research_strategy import ResearchStrategy
 from pegasus.config import BacktestConfig
 from pegasus.engine.backtest import BacktestEngine
 from pegasus.metrics.report import compute_metrics
+from pegasus.viz.plots import save_report
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,9 @@ def run_backtest(
     slippage_override: float | None = None,
     symbols_override: list[str] | None = None,
     timeframe_override: str | None = None,
+    start_override: str | None = None,
+    end_override: str | None = None,
+    save_html: bool = True,
 ) -> list[BacktestResultSummary]:
     """Run a backtest for a family on the specified split.
 
@@ -78,10 +82,24 @@ def run_backtest(
         symbols = symbols_override
     if timeframe_override is not None:
         config = config.model_copy(update={"timeframe": timeframe_override})
+    if start_override is not None:
+        start = start_override
+    if end_override is not None:
+        end = end_override
 
     # Build strategy from family's research/ dir
     research_dir = store.root / "families" / family_id / "research"
     strategy = ResearchStrategy(research_dir)
+
+    # Read timeframe from family's model_config if not explicitly overridden
+    if timeframe_override is None:
+        try:
+            model_tf = strategy._config_mod.MODEL_CONFIG.get("timeframe")
+            if model_tf:
+                config = config.model_copy(update={"timeframe": model_tf})
+                logger.info("Using timeframe from model_config: %s", model_tf)
+        except Exception:
+            pass
 
     engine = BacktestEngine(strategy=strategy, config=config)
     results: list[BacktestResultSummary] = []
@@ -90,6 +108,17 @@ def run_backtest(
         logger.info("Running backtest: %s / %s / %s-%s", family_id, symbol, start, end)
         bt_result = engine.run(symbol, start, end, config.timeframe)
         bt_result.metrics = compute_metrics(bt_result)
+
+        # Save HTML report per symbol
+        if save_html:
+            try:
+                reports_dir = store.root / "reports" / family_id
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                report_path = reports_dir / f"{symbol}_{config.timeframe}.html"
+                save_report(bt_result, report_path)
+                logger.info("Saved report: %s", report_path)
+            except Exception as e:
+                logger.warning("Failed to save HTML report for %s: %s", symbol, e)
 
         summary = BacktestResultSummary(
             symbol=symbol,

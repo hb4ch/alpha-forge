@@ -31,7 +31,9 @@ def run_tier(
     All judge-specific output models inherit from JudgeOutput, so the
     return type is compatible.
     """
-    client = client or LLMClient()
+    if client is None:
+        from alpha_forge.app.agents.llm_config import get_client_for_role
+        client = get_client_for_role("result_judge")
     outputs: list[JudgeOutput] = []
 
     if tier == 1:

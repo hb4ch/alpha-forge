@@ -32,6 +32,7 @@ class ResearcherAgent:
         family: IdeaFamily,
         seed: SeedCard,
         prior_feedback: list[str] | None = None,
+        stream_callback=None,
     ) -> str:
         """Draft an iteration plan for the family."""
         feedback_str = "\n".join(prior_feedback) if prior_feedback else "No prior feedback."
@@ -68,13 +69,14 @@ Keep the plan specific and implementable. Do not be vague."""
 
 Draft the implementation plan.
 """
-        return self.client.call(system, user_prompt)
+        return self.client.call(system, user_prompt, stream_callback=stream_callback)
 
     def write_code(
         self,
         family: IdeaFamily,
         plan: str,
         prior_feedback: list[str] | None = None,
+        stream_callback=None,
     ) -> dict[str, str]:
         """Generate the 4 research files based on the plan.
 
@@ -120,7 +122,7 @@ Rules:
 Generate the 4 research files as JSON.
 """
 
-        result = self.client.call_json(system, user_prompt)
+        result = self.client.call_json(system, user_prompt, stream_callback=stream_callback)
 
         # Validate expected keys
         expected = {"features.py", "model_config.py", "signal_combiner.py", "labels.py"}

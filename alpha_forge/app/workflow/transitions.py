@@ -116,12 +116,6 @@ class TransitionEngine:
         new_state = TRANSITION_TABLE[key]
         updated_family = updated_family.model_copy(update={"state": new_state})
 
-        # Handle iteration increment on ITERATE
-        if event == FamilyEvent.ITERATE:
-            updated_family = updated_family.model_copy(
-                update={"current_iteration": updated_family.current_iteration + 1}
-            )
-
         # Handle best score update
         if ctx.get("score") is not None and ctx["score"] > updated_family.best_qualified_score:
             updated_family = updated_family.model_copy(

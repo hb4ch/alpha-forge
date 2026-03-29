@@ -1,6 +1,7 @@
 """Override modal for semi-auto mode verdict decisions."""
 from __future__ import annotations
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -27,14 +28,17 @@ class OverrideModal(ModalScreen[dict]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="override-container"):
-            yield Label(f"⚖ {self.judge_type.title()} Judge verdict: {self.verdict.upper()}", id="verdict-label")
-            yield Static(self.reasoning[:300] if self.reasoning else "", id="reasoning-text")
+            yield Label(
+                Text(f"⚖ {self.judge_type.title()} Judge verdict: {self.verdict.upper()}"),
+                id="verdict-label",
+            )
+            yield Static(Text(self.reasoning[:300] if self.reasoning else ""), id="reasoning-text")
             yield Label("")
-            yield Label("[a] Accept verdict")
-            yield Label("[o] Override → APPROVE")
-            yield Label("[r] Override → REJECT")
-            yield Label("[v] Override → REVISE with feedback")
-            yield Label("[s] Skip to autopilot")
+            yield Label(Text("[a] Accept verdict"))
+            yield Label(Text("[o] Override -> APPROVE"))
+            yield Label(Text("[r] Override -> REJECT"))
+            yield Label(Text("[v] Override -> REVISE with feedback"))
+            yield Label(Text("[s] Skip to autopilot"))
             yield TextArea(id="feedback-input")
             yield Button("Submit Revision Feedback", id="submit-feedback", variant="warning")
 

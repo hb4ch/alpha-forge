@@ -40,6 +40,18 @@ def _slugify(text: str) -> str:
     return text[:50]
 
 
+def _next_family_id(store: MarkdownStore, mechanism: str) -> str:
+    """Allocate the next available family ID for a mechanism slug."""
+    slug = _slugify(mechanism)
+    pattern = re.compile(rf"^{re.escape(slug)}_v(\d+)$")
+    highest = 0
+    for family_id in store.list_families():
+        match = pattern.match(family_id)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return f"{slug}_v{highest + 1}"
+
+
 def ingest_seed(
     raw_text: str,
     source: str,
@@ -68,7 +80,9 @@ def distill_seed(
     client: LLMClient | None = None,
 ) -> SeedCard:
     """Distill a raw seed into a structured research card via LLM."""
-    client = client or LLMClient()
+    if client is None:
+        from alpha_forge.app.agents.llm_config import get_client_for_role
+        client = get_client_for_role("seed_judge")
     raw_seed = store.read_seed(seed_id, stage="inbox")
 
     system = """You are a crypto alpha research assistant. Your job is to convert a raw research idea into a structured seed card.
@@ -102,7 +116,7 @@ Seed ID: {seed_id}
     card = SeedCard.model_validate(data)
 
     store.write_seed(card, stage="distilled")
-    store.move_seed(seed_id, from_stage="inbox", to_stage="distilled")
+    store.delete_seed(seed_id, stage="inbox")
     logger.info("Distilled seed %s", seed_id)
     return card
 
@@ -137,8 +151,7 @@ def create_family(
     """Create a new idea family from an accepted seed."""
     card = store.read_seed(seed_id, stage="accepted")
 
-    # Generate family ID
-    family_id = _slugify(card.mechanism) + "_v1"
+    family_id = _next_family_id(store, card.mechanism)
 
     # Build allowed mutations from the seed card
     allowed = AllowedMutations(

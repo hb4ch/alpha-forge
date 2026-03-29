@@ -34,7 +34,8 @@ class BaseJudge:
 
             self.client = get_client_for_role(role)
         else:
-            self.client = LLMClient()
+            from alpha_forge.app.agents.llm_config import get_client_for_role
+            self.client = get_client_for_role("result_judge")
 
     def _load_system_prompt(self) -> str:
         """Load the system prompt template from disk."""

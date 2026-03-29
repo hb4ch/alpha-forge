@@ -70,6 +70,7 @@ def run_robustness_battery(
             results = run_backtest(
                 family_id, store, configs_dir,
                 fee_rate_override=base_fee * mult,
+                save_html=False,
             )
             perturbed_sharpe = _avg_sharpe(results)
             degradation = (baseline_sharpe - perturbed_sharpe) / max(abs(baseline_sharpe), 1e-6)
@@ -90,6 +91,7 @@ def run_robustness_battery(
             results = run_backtest(
                 family_id, store, configs_dir,
                 slippage_override=base_slippage * mult,
+                save_html=False,
             )
             perturbed_sharpe = _avg_sharpe(results)
             degradation = (baseline_sharpe - perturbed_sharpe) / max(abs(baseline_sharpe), 1e-6)
@@ -114,8 +116,8 @@ def run_robustness_battery(
         import pandas as pd
         start_ts = pd.Timestamp(val_start)
         end_ts = pd.Timestamp(val_end)
-        total_days = (end_ts - start_ts).days
-        window_days = total_days // 3
+        total_days = max((end_ts - start_ts).days, 1)
+        window_days = max(total_days // 3, 1)
 
         window_sharpes = []
         for i in range(3):
@@ -124,8 +126,14 @@ def run_robustness_battery(
             if i == 2:
                 w_end = val_end
 
-            # Use custom split by overriding via direct backtest call
-            results = run_backtest(family_id, store, configs_dir)
+            results = run_backtest(
+                family_id,
+                store,
+                configs_dir,
+                start_override=w_start,
+                end_override=w_end,
+                save_html=False,
+            )
             w_sharpe = _avg_sharpe(results)
             window_sharpes.append(w_sharpe)
 
@@ -153,6 +161,7 @@ def run_robustness_battery(
                 results = run_backtest(
                     family_id, store, configs_dir,
                     symbols_override=remaining,
+                    save_html=False,
                 )
                 loo_sharpe = _avg_sharpe(results)
                 degradation = (baseline_sharpe - loo_sharpe) / max(abs(baseline_sharpe), 1e-6)

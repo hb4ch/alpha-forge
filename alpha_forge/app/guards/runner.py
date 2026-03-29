@@ -8,7 +8,10 @@ from pathlib import Path
 from alpha_forge.app.domain.models import GuardResult, IdeaFamily
 from alpha_forge.app.guards.check_edit_surface import check_edit_surface
 from alpha_forge.app.guards.config_guard import check_config_immutability
-from alpha_forge.app.guards.reproducibility_guard import check_reproducibility
+from alpha_forge.app.guards.reproducibility_guard import (
+    check_reproducibility,
+    collect_reproducibility_metadata,
+)
 from alpha_forge.app.guards.split_guard import check_split_isolation
 from alpha_forge.app.guards.timestamp_guard import check_time_integrity
 from alpha_forge.app.storage.artifact_store import ArtifactStore
@@ -61,10 +64,15 @@ def run_all_guards(
         logger.warning("Config immutability guard failed: %s", result.violations)
 
     # 5. Reproducibility guard
-    result = check_reproducibility(store.root)
+    prior_metadata = artifact_store.load_reproducibility_metadata(family.family_id)
+    result = check_reproducibility(store.root, prior_metadata=prior_metadata)
     results.append(result)
     if not result.passed:
         logger.warning("Reproducibility guard failed: %s", result.violations)
+    artifact_store.save_reproducibility_metadata(
+        family.family_id,
+        collect_reproducibility_metadata(store.root),
+    )
 
     return results
 

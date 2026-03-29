@@ -1,6 +1,8 @@
 """Guards tab: pass/fail status for all guard checks."""
 from __future__ import annotations
 
+from rich.console import Group
+from rich.text import Text
 from textual.widgets import Static
 
 
@@ -8,22 +10,27 @@ class GuardsPanel(Static):
     """Guard check results with pass/fail badges."""
 
     def update_guards(self, results: list[dict]) -> None:
-        lines = []
+        lines: list[Text] = []
         for g in results:
-            name = g.get("guard_name", "unknown")
+            name = str(g.get("guard_name", "unknown"))
             passed = g.get("passed", False)
             violations = g.get("violations", [])
             is_red = g.get("is_red_strike", False)
 
+            line = Text("  ")
             if passed:
-                badge = "[green]✓ PASS[/]"
+                line.append("✓ PASS", style="green")
             elif is_red:
-                badge = "[bold red]✗ RED STRIKE[/]"
+                line.append("✗ RED STRIKE", style="bold red")
             else:
-                badge = "[red]✗ FAIL[/]"
+                line.append("✗ FAIL", style="red")
 
-            lines.append(f"  {badge}  {name}")
+            line.append(f"  {name}")
+            lines.append(line)
             for v in violations:
-                lines.append(f"      [dim]{v}[/]")
+                lines.append(Text(f"      {v}", style="dim"))
 
-        self.update("\n".join(lines) if lines else "  [dim]No guard results yet[/]")
+        if lines:
+            self.update(Group(*lines))
+        else:
+            self.update(Text("  No guard results yet", style="dim"))

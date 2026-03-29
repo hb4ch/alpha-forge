@@ -11,7 +11,8 @@ DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
 
 class ProviderConfig(BaseModel):
-    api_key_env: str
+    api_key_env: str | None = None
+    api_key: str | None = None
     base_url: str | None = None
 
 
@@ -75,14 +76,20 @@ def load_config(path: Path | None = None) -> LLMConfig:
 
 def get_client_for_role(role: str, config_path: Path | None = None):
     """Factory: return an LLMClient configured for the given role."""
+    import os
+
     from alpha_forge.app.agents.llm_client import LLMClient
 
     config = load_config(config_path)
     tier = config.get_tier(role)
     provider_config = config.get_provider(role)
+    api_key = provider_config.api_key
+    if not api_key and provider_config.api_key_env:
+        api_key = os.environ.get(provider_config.api_key_env)
 
     return LLMClient(
         model=tier.model,
         provider=tier.provider,
         base_url=provider_config.base_url,
+        api_key=api_key,
     )

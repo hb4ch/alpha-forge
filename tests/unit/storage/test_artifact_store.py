@@ -47,6 +47,14 @@ class TestBestResultRoundtrip:
         assert loaded == data
 
 
+class TestReproducibilityMetadataRoundtrip:
+    def test_save_and_load(self, artifact_store: ArtifactStore) -> None:
+        data = {"python_version": "3.13", "git_hash": "abc123", "platform": "linux"}
+        artifact_store.save_reproducibility_metadata("fam_001", data)
+        loaded = artifact_store.load_reproducibility_metadata("fam_001")
+        assert loaded == data
+
+
 class TestLoadConfigHashesReturnsNone:
     def test_nonexistent_family(self, artifact_store: ArtifactStore) -> None:
         result = artifact_store.load_config_hashes("fam_nonexistent")

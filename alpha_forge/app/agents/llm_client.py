@@ -25,29 +25,36 @@ class LLMClient:
         model: str = DEFAULT_MODEL,
         provider: str = "anthropic",
         base_url: str | None = None,
+        api_key: str | None = None,
         stream_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
         self.stream_callback = stream_callback
 
-        if provider == "openai":
+        if provider not in ("anthropic",):
+            # OpenAI-compatible providers (openai, bigmodel, dgx_spark, etc.)
             import openai
 
             kwargs: dict[str, Any] = {}
             if base_url:
                 kwargs["base_url"] = base_url
+            if api_key:
+                kwargs["api_key"] = api_key
             self.openai_client = openai.OpenAI(**kwargs)
             self.anthropic_client = None
         else:
-            self.anthropic_client = anthropic.Anthropic()
+            kwargs_a: dict[str, Any] = {}
+            if api_key:
+                kwargs_a["api_key"] = api_key
+            self.anthropic_client = anthropic.Anthropic(**kwargs_a)
             self.openai_client = None
 
     def call(
         self,
         system: str,
         user_prompt: str,
-        max_tokens: int = 4096,
+        max_tokens: int = 128000,
         temperature: float = 0.0,
         stream_callback: Callable[[str], None] | None = None,
     ) -> str:
@@ -65,9 +72,9 @@ class LLMClient:
         temperature: float,
         cb: Callable[[str], None] | None,
     ) -> str:
-        if self.provider == "openai":
-            return self._call_openai(system, user_prompt, max_tokens, temperature, cb)
-        return self._call_anthropic(system, user_prompt, max_tokens, temperature, cb)
+        if self.provider == "anthropic":
+            return self._call_anthropic(system, user_prompt, max_tokens, temperature, cb)
+        return self._call_openai(system, user_prompt, max_tokens, temperature, cb)
 
     def _call_anthropic(
         self,
@@ -118,13 +125,17 @@ class LLMClient:
                 messages=msgs,
                 stream=True,
             )
-            chunks: list[str] = []
+            reasoning_chunks: list[str] = []
+            content_chunks: list[str] = []
             for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    token = chunk.choices[0].delta.content
-                    cb(token)
-                    chunks.append(token)
-            return "".join(chunks)
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    cb(delta.content)
+                    content_chunks.append(delta.content)
+                elif getattr(delta, "reasoning_content", None):
+                    reasoning_chunks.append(delta.reasoning_content)
+            # Prefer content; fall back to reasoning for models that only emit reasoning
+            return "".join(content_chunks) or "".join(reasoning_chunks)
         else:
             response = self.openai_client.chat.completions.create(
                 model=self.model,
@@ -132,7 +143,10 @@ class LLMClient:
                 temperature=temperature,
                 messages=msgs,
             )
-            return response.choices[0].message.content
+            msg = response.choices[0].message
+            # Some reasoning models (GLM, DeepSeek-R1) put output in reasoning_content
+            content = msg.content or getattr(msg, "reasoning_content", "") or ""
+            return content
 
     def _retry_call(self, fn: Callable, *args: Any, **kwargs: Any) -> Any:
         """Wrap a call with exponential backoff retry on retriable errors."""
@@ -166,15 +180,16 @@ class LLMClient:
         self,
         system: str,
         user_prompt: str,
-        max_tokens: int = 4096,
+        max_tokens: int = 128000,
         temperature: float = 0.0,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Make an API call and parse the response as JSON.
 
         Retries up to MAX_RETRIES times on parse failure.
         """
         for attempt in range(MAX_RETRIES + 1):
-            raw = self.call(system, user_prompt, max_tokens, temperature)
+            raw = self.call(system, user_prompt, max_tokens, temperature, stream_callback=stream_callback)
             try:
                 return _extract_json(raw)
             except (json.JSONDecodeError, ValueError) as e:

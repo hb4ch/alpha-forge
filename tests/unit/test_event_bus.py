@@ -6,9 +6,15 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from alpha_forge.app.event_bus import EventBus
+
+
+class DummyApp:
+    def __init__(self) -> None:
+        self.messages: list[object] = []
+
+    def post_message(self, message: object) -> None:
+        self.messages.append(message)
 
 
 class TestEventBusSubscribe:
@@ -47,26 +53,30 @@ class TestEventBusSubscribe:
 
 
 class TestEventBusSyncEmit:
-    def test_emit_sync_schedules_on_loop(self) -> None:
+    def test_emit_sync_notifies_local_subscribers_without_running_loop(self) -> None:
         loop = asyncio.new_event_loop()
         bus = EventBus(loop)
         received = []
         bus.subscribe("sync_test", lambda data: received.append(data))
 
-        # Start loop in background thread
-        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-        loop_thread.start()
-
-        # Emit from this thread (simulating worker thread)
         bus.emit_sync("sync_test", {"from": "worker"})
-
-        # Give event loop time to process
-        time.sleep(0.1)
-        loop.call_soon_threadsafe(loop.stop)
-        loop_thread.join(timeout=1)
 
         assert len(received) == 1
         assert received[0]["from"] == "worker"
+        loop.close()
+
+    def test_emit_sync_posts_to_app_and_notifies_subscribers(self) -> None:
+        loop = asyncio.new_event_loop()
+        app = DummyApp()
+        bus = EventBus(loop, app=app)
+        received = []
+        bus.subscribe("sync_test", lambda data: received.append(data))
+
+        bus.emit_sync("sync_test", {"from": "worker"})
+
+        assert len(received) == 1
+        assert received[0]["from"] == "worker"
+        assert len(app.messages) == 1
         loop.close()
 
 
@@ -77,32 +87,28 @@ class TestEventBusGate:
         bus.semi_auto = True
         gate_results = []
         override_emitted = []
+        worker_started = threading.Event()
 
         bus.subscribe("verdict_awaiting_override", lambda d: override_emitted.append(d))
 
-        # Start loop in background
-        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-        loop_thread.start()
-
         def worker():
+            worker_started.set()
             result = bus.gate_for_override({"verdict": "revise", "judge": "overfit"})
             gate_results.append(result)
 
         worker_thread = threading.Thread(target=worker)
         worker_thread.start()
 
-        time.sleep(0.1)  # Let worker block on gate
+        assert worker_started.wait(timeout=1) is True
+        time.sleep(0.05)
+        assert override_emitted == [{"verdict": "revise", "judge": "overfit"}]
 
-        # Release from "TUI side"
         bus.release_gate({"action": "override", "verdict": "approve"})
         worker_thread.join(timeout=1)
 
         assert len(gate_results) == 1
         assert gate_results[0]["action"] == "override"
         assert gate_results[0]["verdict"] == "approve"
-
-        loop.call_soon_threadsafe(loop.stop)
-        loop_thread.join(timeout=1)
         loop.close()
 
     def test_gate_skipped_in_autopilot(self) -> None:

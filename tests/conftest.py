@@ -83,6 +83,7 @@ def tmp_workspace(tmp_path: Path) -> Path:
     for subdir in [
         "families",
         "seeds/inbox",
+        "seeds/distilled",
         "seeds/pending",
         "seeds/accepted",
         "seeds/rejected",

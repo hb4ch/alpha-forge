@@ -177,6 +177,12 @@ class MarkdownStore:
         dst = dst_dir / f"{seed_id}.md"
         src.rename(dst)
 
+    def delete_seed(self, seed_id: str, stage: str = "inbox") -> None:
+        """Delete a seed card from a stage directory if it exists."""
+        path = self._seed_dir(stage) / f"{seed_id}.md"
+        if path.exists():
+            path.unlink()
+
     def list_seeds(self, stage: str = "inbox") -> list[str]:
         """List seed IDs in a directory."""
         directory = self._seed_dir(stage)

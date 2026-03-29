@@ -1,10 +1,12 @@
 """Verdicts tab: collapsible judge output cards."""
 from __future__ import annotations
 
+from rich.console import Group
 from rich.text import Text
-from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Static
+
+from alpha_forge.tui.rendering import normalize_verdict_output
 
 VERDICT_STYLES = {
     "approve": "green",
@@ -24,23 +26,28 @@ class VerdictCard(Static):
     """Single judge verdict display."""
 
     def set_verdict(self, output: dict) -> None:
-        judge = output.get("judge_type", "unknown")
-        verdict = output.get("verdict", "unknown")
-        reasoning = output.get("reasoning", "")
-        must_fix = output.get("must_fix", [])
-        risk = output.get("risk_level", "low")
+        display = normalize_verdict_output(output)
+        color = VERDICT_STYLES.get(display.verdict, "white")
 
-        color = VERDICT_STYLES.get(verdict, "white")
-        risk_color = RISK_STYLES.get(risk, "white")
+        header = Text()
+        header.append("⚖ ", style="bold magenta")
+        header.append(display.judge.title(), style="bold magenta")
+        header.append(" ")
+        header.append(display.verdict.upper(), style=f"bold {color}")
 
-        lines = [
-            f"[bold magenta]⚖ {judge.title()}[/] [{color}]{verdict.upper()}[/] [dim]risk:[/][{risk_color}]{risk}[/]",
-        ]
-        if reasoning:
-            lines.append(f"  {reasoning[:200]}")
-        if must_fix:
-            lines.append(f"  [dim]must_fix: {must_fix}[/]")
-        self.update("\n".join(lines))
+        if display.primary_level and display.primary_label:
+            risk_color = RISK_STYLES.get(display.primary_level, "white")
+            header.append(" ")
+            header.append(f"{display.primary_label}:", style="dim")
+            header.append(display.primary_level, style=risk_color)
+
+        lines: list[Text] = [header]
+        if display.reasoning:
+            lines.append(Text(f"  {display.reasoning[:200]}"))
+        if display.must_fix:
+            lines.append(Text("  must_fix:", style="dim"))
+            lines.extend(Text(f"    - {item}", style="dim") for item in display.must_fix)
+        self.update(Group(*lines))
 
 
 class VerdictsPanel(VerticalScroll):

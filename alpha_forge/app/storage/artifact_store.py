@@ -139,6 +139,18 @@ class ArtifactStore:
             return None
         return self.load_json(path)
 
+    def save_reproducibility_metadata(self, family_id: str, metadata: dict[str, str]) -> None:
+        """Save reproducibility metadata for a family."""
+        path = self.root / "families" / family_id / "reproducibility.json"
+        self._atomic_write_json(path, metadata)
+
+    def load_reproducibility_metadata(self, family_id: str) -> dict[str, str] | None:
+        """Load reproducibility metadata for a family."""
+        path = self.root / "families" / family_id / "reproducibility.json"
+        if not path.exists():
+            return None
+        return self.load_json(path)
+
     # ------------------------------------------------------------------
     # Strike count (JSON artifact)
     # ------------------------------------------------------------------

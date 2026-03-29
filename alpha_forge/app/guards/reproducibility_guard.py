@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import platform
 import subprocess
-import sys
 from pathlib import Path
 
 from alpha_forge.app.domain.models import GuardResult
@@ -25,16 +23,21 @@ def _get_git_hash(repo_dir: Path) -> str:
         return "git-not-found"
 
 
+def collect_reproducibility_metadata(workspace_root: Path) -> dict[str, str]:
+    """Collect reproducibility metadata for the current environment."""
+    return {
+        "python_version": platform.python_version(),
+        "git_hash": _get_git_hash(workspace_root.parent if workspace_root.name == "alpha_research" else workspace_root),
+        "platform": platform.platform(),
+    }
+
+
 def check_reproducibility(
     workspace_root: Path,
     prior_metadata: dict[str, str] | None = None,
 ) -> GuardResult:
     """Log reproducibility metadata and compare against prior run."""
-    metadata = {
-        "python_version": platform.python_version(),
-        "git_hash": _get_git_hash(workspace_root.parent if workspace_root.name == "alpha_research" else workspace_root),
-        "platform": platform.platform(),
-    }
+    metadata = collect_reproducibility_metadata(workspace_root)
 
     violations: list[str] = []
 
