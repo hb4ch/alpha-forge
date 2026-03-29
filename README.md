@@ -12,6 +12,16 @@
 
 Alpha Forge is an autonomous research system that discovers, validates, and hardens crypto trading strategies through an adversarially-reviewed, mutation-bounded pipeline. Every idea is stress-tested by 7 specialized LLM judges, 5 deterministic guards, and a robustness battery before it can graduate. All state lives in Markdown + YAML files. No database. No black boxes.
 
+## TUI Dashboard
+
+![Alpha Forge TUI](docs/tui-screenshot.png)
+
+The Textual-based TUI provides a real-time cockpit view of the research loop: live LLM token streaming, judge verdicts with color-coded severity, pipeline stage tracking, guard results, and autopilot/semi-auto mode toggle. Launch with:
+
+```bash
+python scripts/run_tui.py --workspace alpha_research
+```
+
 ## Why Alpha Forge?
 
 Manual quant research suffers from three failure modes:
