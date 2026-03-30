@@ -8,6 +8,7 @@ from pathlib import Path
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
+from textual.theme import Theme
 
 from alpha_forge.app.domain.states import IterationStage
 from alpha_forge.app.event_bus import EventBus
@@ -38,6 +39,26 @@ class BusEvent(Message):
         self.data = data
 
 
+ALPHA_FORGE_THEME = Theme(
+    name="alpha-forge",
+    primary="#58a6ff",
+    secondary="#8b949e",
+    warning="#d29922",
+    error="#f85149",
+    success="#7ee787",
+    accent="#58a6ff",
+    foreground="#c9d1d9",
+    background="#0d1117",
+    surface="#161b22",
+    panel="#21262d",
+    dark=True,
+    variables={
+        "border-muted": "#30363d",
+        "text-muted": "#8b949e",
+    },
+)
+
+
 class AlphaForgeApp(App):
     """Main TUI application for Alpha Forge."""
 
@@ -66,6 +87,7 @@ class AlphaForgeApp(App):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.register_theme(ALPHA_FORGE_THEME)
         self.workspace = workspace
         self.configs_dir = configs_dir
         self.family_id = family_id
@@ -78,6 +100,9 @@ class AlphaForgeApp(App):
         yield MainScreen()
 
     def on_mount(self) -> None:
+        # Activate custom theme
+        self.theme = "alpha-forge"
+
         # Set up EventBus — use post_message for thread-safe delivery
         loop = asyncio.get_event_loop()
         self._bus = EventBus(loop, app=self)
@@ -98,6 +123,7 @@ class AlphaForgeApp(App):
     @staticmethod
     def _dispatch_stage_changed(app: "AlphaForgeApp", data: dict) -> None:
         stage_str = data.get("stage", "")
+        family_id = data.get("family_id", "")
         try:
             stage = IterationStage(stage_str)
             app.query_one("#sidebar", StateSidebar).update_stage(stage)
@@ -106,6 +132,8 @@ class AlphaForgeApp(App):
         detail = data.get("detail", "")
         msg = f"Stage: {stage_str}" + (f" — {detail}" if detail else "")
         app.query_one("#conversation", ConversationStream).add_system_message(msg)
+        if family_id:
+            app._refresh_sidebar_family(family_id)
 
     @staticmethod
     def _dispatch_verdict_received(app: "AlphaForgeApp", data: dict) -> None:
@@ -133,9 +161,15 @@ class AlphaForgeApp(App):
     def _dispatch_iteration_complete(app: "AlphaForgeApp", data: dict) -> None:
         score = data.get("score", 0)
         qualified = data.get("qualified", False)
+        iteration = data.get("iteration", 0)
+        family_id = data.get("family_id", "")
         app.query_one("#conversation", ConversationStream).add_system_message(
             f"Iteration complete. Score: {score:.3f} {'✓ Qualified' if qualified else '✗ Not qualified'}"
         )
+        if iteration:
+            app.query_one("#status-bar", StatusBar).set_iteration(iteration)
+        if family_id:
+            app._refresh_sidebar_family(family_id)
 
     @staticmethod
     def _dispatch_override_needed(app: "AlphaForgeApp", data: dict) -> None:
@@ -151,11 +185,26 @@ class AlphaForgeApp(App):
                 app._bus.release_gate(decision)
         app.push_screen(modal, handle_decision)
 
+    def _refresh_sidebar_family(self, family_id: str) -> None:
+        """Load family from store and update the sidebar."""
+        try:
+            from alpha_forge.app.storage.markdown_store import MarkdownStore
+            store = MarkdownStore(self.workspace)
+            family = store.read_family(family_id)
+            self.query_one("#sidebar", StateSidebar).update_family(family)
+        except Exception:
+            pass
+
     @staticmethod
     def _dispatch_loop_started(app: "AlphaForgeApp", data: dict) -> None:
+        family_id = data.get("family_id", "auto")
         app.query_one("#conversation", ConversationStream).add_system_message(
-            f"Loop started for family: {data.get('family_id', 'auto')}"
+            f"Loop started for family: {family_id}"
         )
+        status = app.query_one("#status-bar", StatusBar)
+        status.set_family(family_id)
+        status.set_iteration(0, app.max_iterations)
+        app._refresh_sidebar_family(family_id)
 
     @staticmethod
     def _dispatch_loop_finished(app: "AlphaForgeApp", data: dict) -> None:
@@ -282,8 +331,7 @@ class AlphaForgeApp(App):
             conv.add_system_message(f"Seeding: {' '.join(args)}")
             # TODO: spawn seed intake in background thread
         elif name == "strike" and args and args[0] == "reset":
-            conv.add_system_message("Strike reset requested")
-            # TODO: reset strikes on active family
+            self._do_strike_reset(conv)
         elif name == "override" and args:
             if self._bus and self._bus._gate:
                 self._bus.release_gate({"action": "override", "verdict": args[0]})
@@ -303,8 +351,42 @@ class AlphaForgeApp(App):
         elif name == "export":
             conv.add_system_message("Export not yet implemented")
         elif name == "retry":
-            conv.add_system_message("Retry not yet implemented")
+            self._do_retry(conv)
         elif name == "threads" and args:
             conv.add_system_message(f"DuckDB threads set to {args[0]}")
         else:
             conv.add_system_message(f"Unknown command: {name}")
+
+    def _get_active_family_id(self) -> str | None:
+        """Read the active family ID from STATE.md."""
+        from alpha_forge.app.storage.markdown_store import MarkdownStore
+        store = MarkdownStore(self.workspace)
+        state = store.read_global_state()
+        return state.get("active_family")
+
+    def _do_strike_reset(self, conv: ConversationStream) -> None:
+        """Reset strikes on the active family and re-queue it."""
+        from alpha_forge.app.domain.states import FamilyState
+        from alpha_forge.app.domain.strikes import reset_strikes
+        from alpha_forge.app.storage.markdown_store import MarkdownStore
+
+        family_id = self._get_active_family_id()
+        if not family_id:
+            conv.add_system_message("No active family found")
+            return
+
+        store = MarkdownStore(self.workspace)
+        family = store.read_family(family_id)
+        old_strikes = family.strike_count
+        family = reset_strikes(family)
+        family = family.model_copy(update={"state": FamilyState.QUEUED})
+        store.write_family(family)
+        conv.add_system_message(
+            f"Strikes reset on {family_id}: {old_strikes} → 0, state → QUEUED"
+        )
+
+    def _do_retry(self, conv: ConversationStream) -> None:
+        """Reset strikes, re-queue, and restart the loop."""
+        self._do_strike_reset(conv)
+        conv.add_system_message("Restarting loop...")
+        self._start_loop()

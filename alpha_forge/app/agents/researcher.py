@@ -6,15 +6,25 @@ signal_combiner.py) based on family context and prior feedback.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from alpha_forge.app.agents.llm_client import LLMClient
 from alpha_forge.app.domain.models import IdeaFamily, SeedCard
 
 logger = logging.getLogger(__name__)
+
+
+def _format_code_bundle(code_files: dict[str, str] | None) -> str:
+    """Render existing code for prompt context."""
+    if not code_files:
+        return "No existing research code."
+
+    parts: list[str] = []
+    for filename in sorted(code_files):
+        parts.append(f"# === {filename} ===\n{code_files[filename]}")
+    return "\n\n".join(parts)
+
 
 class ResearcherAgent:
     """Agent that drafts plans and writes research code."""
@@ -76,6 +86,7 @@ Draft the implementation plan.
         family: IdeaFamily,
         plan: str,
         prior_feedback: list[str] | None = None,
+        existing_code: dict[str, str] | None = None,
         stream_callback=None,
     ) -> dict[str, str]:
         """Generate the 4 research files based on the plan.
@@ -83,6 +94,13 @@ Draft the implementation plan.
         Returns a dict mapping filename -> code content.
         """
         feedback_str = "\n".join(prior_feedback) if prior_feedback else "No prior feedback."
+        existing_code_str = _format_code_bundle(existing_code)
+        revision_guidance = (
+            "Revise the existing implementation in place. Preserve the current file contracts and"
+            " update only the allowed research files."
+            if existing_code
+            else "Generate the initial implementation for the allowed research files."
+        )
 
         system = """You are a crypto alpha researcher implementing a trading strategy.
 Generate Python code for the 4 research files. You MUST respond with valid JSON
@@ -118,6 +136,20 @@ Rules:
 
 ## Prior Feedback
 {feedback_str}
+
+## Allowed Files
+- features.py
+- labels.py
+- model_config.py
+- signal_combiner.py
+
+## Existing Research Files
+```python
+{existing_code_str}
+```
+
+## Revision Mode
+{revision_guidance}
 
 Generate the 4 research files as JSON.
 """

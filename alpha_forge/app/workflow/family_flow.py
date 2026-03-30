@@ -5,6 +5,7 @@ Plan → Judge → Code → Judge → Guards → Backtest → Robustness → Jud
 
 from __future__ import annotations
 
+import difflib
 import logging
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,13 @@ PLAN_ENTRY_STATES = {
     FamilyState.ITERATE,
     FamilyState.PLAN_REVISION_REQUIRED,
 }
+
+ALLOWED_RESEARCH_FILES = [
+    "features.py",
+    "labels.py",
+    "model_config.py",
+    "signal_combiner.py",
+]
 
 
 class FamilyFlow:
@@ -89,11 +97,133 @@ class FamilyFlow:
 
     def _read_research_code(self, family_id: str) -> str:
         """Read all research/ files as a single string."""
-        research_dir = self.store.root / "families" / family_id / "research"
+        return self._format_code_bundle(self._read_research_code_dict(family_id))
+
+    @staticmethod
+    def _format_code_bundle(code_files: dict[str, str] | None) -> str:
+        """Format research code for prompt context."""
+        if not code_files:
+            return ""
         parts: list[str] = []
-        for py_file in sorted(research_dir.glob("*.py")):
-            parts.append(f"# === {py_file.name} ===\n{py_file.read_text()}")
+        for filename in sorted(code_files):
+            parts.append(f"# === {filename} ===\n{code_files[filename]}")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _forbidden_files_context() -> list[str]:
+        """Describe the forbidden edit surface outside the research files."""
+        return [
+            "Any file outside families/<family_id>/research/",
+            "alpha_forge/app/*",
+            "alpha_forge/engine/*",
+            "alpha_forge/tui/*",
+            "configs/*",
+            "scripts/*",
+            "judges/prompts/*",
+            "tests/*",
+        ]
+
+    def _load_prior_code_snapshot(
+        self,
+        family_id: str,
+        iteration_num: int,
+        started_new_cycle: bool,
+    ) -> dict[str, str] | None:
+        """Load the prior saved code snapshot when available."""
+        snapshot_iteration = iteration_num - 1 if started_new_cycle else iteration_num
+        if snapshot_iteration <= 0:
+            return None
+        return self.artifact_store.load_code_snapshot(family_id, snapshot_iteration)
+
+    @staticmethod
+    def _generate_code_diff(
+        previous_code: dict[str, str] | None,
+        current_code: dict[str, str],
+    ) -> str:
+        """Generate a unified diff between code bundles."""
+        if not previous_code:
+            return "No prior snapshot available."
+
+        diff_parts: list[str] = []
+        for filename in sorted(set(previous_code) | set(current_code)):
+            old_text = previous_code.get(filename, "")
+            new_text = current_code.get(filename, "")
+            if old_text == new_text:
+                continue
+            diff_parts.extend(
+                difflib.unified_diff(
+                    old_text.splitlines(keepends=True),
+                    new_text.splitlines(keepends=True),
+                    fromfile=f"a/{filename}",
+                    tofile=f"b/{filename}",
+                )
+            )
+
+        return "".join(diff_parts) or "No textual changes detected."
+
+    def _build_plan_context(
+        self,
+        family: IdeaFamily,
+        seed: SeedCard,
+        prior_feedback: list[str] | None,
+    ) -> dict[str, Any]:
+        """Assemble the planning context from workflow state."""
+        return {
+            "family": family,
+            "seed": seed,
+            "prior_feedback": prior_feedback,
+        }
+
+    def _build_code_write_context(
+        self,
+        family: IdeaFamily,
+        plan: str,
+        prior_feedback: list[str] | None,
+        existing_code: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Assemble the researcher code-writing context."""
+        return {
+            "family": family,
+            "plan": plan,
+            "prior_feedback": prior_feedback,
+            "existing_code": existing_code,
+        }
+
+    def _build_code_review_context(
+        self,
+        plan: str,
+        prior_feedback: list[str] | None,
+        previous_code: dict[str, str] | None,
+        current_code: dict[str, str],
+    ) -> dict[str, Any]:
+        """Assemble tier-2 review context."""
+        return {
+            "plan": plan,
+            "code": self._format_code_bundle(current_code),
+            "diff": self._generate_code_diff(previous_code, current_code),
+            "history": prior_feedback,
+            "changed_files": sorted(current_code.keys()),
+            "allowed_files": list(ALLOWED_RESEARCH_FILES),
+            "forbidden_files": self._forbidden_files_context(),
+        }
+
+    def _build_result_review_context(
+        self,
+        bt_results,
+        robustness,
+        prior_feedback: list[str] | None,
+        iter_num: int,
+        family: IdeaFamily,
+    ) -> dict[str, Any]:
+        """Assemble tier-3 review context."""
+        return {
+            "metrics": {r.symbol: r.all_metrics for r in bt_results},
+            "robustness": robustness.model_dump(),
+            "history": prior_feedback,
+            "iteration_count": iter_num,
+            "config": self._load_costs_config(),
+            "prior_best": family.best_qualified_score,
+        }
 
     def _get_history_context(self, family_id: str) -> list[str]:
         """Get prior iteration history for judge context."""
@@ -215,10 +345,11 @@ class FamilyFlow:
             logger.info("[%s] Drafting plan...", iter_id)
             self._emit("stage_changed", {"stage": "DRAFT_PLAN", "family_id": family_id, "iteration": iter_id})
             self._emit("llm_start", {"role": "Researcher", "task": "Drafting plan"})
+            plan_context = self._build_plan_context(family, seed, prior_feedback)
             plan = self.researcher.draft_plan(
-                family,
-                seed,
-                prior_feedback,
+                plan_context["family"],
+                plan_context["seed"],
+                plan_context["prior_feedback"],
                 stream_callback=self._stream_cb("Researcher"),
             )
             self._emit("llm_end", {"role": "Researcher"})
@@ -239,7 +370,7 @@ class FamilyFlow:
                 "history": prior_feedback,
                 "iteration_count": iter_num,
                 "config": self._load_costs_config(),
-            }, self.client)
+            })
             iteration = iteration.model_copy(update={
                 "judge_outputs": [*iteration.judge_outputs, *tier1_outputs],
                 "stage": IterationStage.PLAN_JUDGED,
@@ -276,7 +407,19 @@ class FamilyFlow:
         old_code = self._read_research_code_dict(family_id)
         if started_new_cycle and old_code and iter_num > 1:
             self.artifact_store.save_code_snapshot(family_id, iter_num - 1, old_code)
-        code_files = self.researcher.write_code(family, plan, prior_feedback, stream_callback=self._stream_cb("Researcher"))
+        code_write_context = self._build_code_write_context(
+            family,
+            plan,
+            prior_feedback,
+            existing_code=old_code if family.state == FamilyState.CODE_REVISION_REQUIRED else None,
+        )
+        code_files = self.researcher.write_code(
+            code_write_context["family"],
+            code_write_context["plan"],
+            code_write_context["prior_feedback"],
+            existing_code=code_write_context["existing_code"],
+            stream_callback=self._stream_cb("Researcher"),
+        )
         self._emit("llm_end", {"role": "Researcher"})
         research_dir = self.store.root / "families" / family_id / "research"
         changed = self.researcher.apply_code(family_id, code_files, research_dir)
@@ -293,13 +436,15 @@ class FamilyFlow:
         # --- Step 4: Tier-2 judge (code review) ---
         logger.info("[%s] Running tier-2 judges (code review)...", iter_id)
         self._emit("stage_changed", {"stage": "CODE_JUDGED", "family_id": family_id, "iteration": iter_id, "detail": "Awaiting tier-2 judges..."})
-        self._emit("llm_start", {"role": "Judges", "task": "Tier-2 code review (Leakage, Overfit)"})
-        code = self._read_research_code(family_id)
-        tier2_outputs = run_tier(2, {
-            "code": code,
-            "diff": "",
-            "history": prior_feedback,
-        }, self.client)
+        self._emit("llm_start", {"role": "Judges", "task": "Tier-2 code review (Leakage, Code)"})
+        prior_code_for_review = old_code or self._load_prior_code_snapshot(family_id, iter_num, started_new_cycle)
+        code_review_context = self._build_code_review_context(
+            plan,
+            prior_feedback,
+            prior_code_for_review,
+            code_files,
+        )
+        tier2_outputs = run_tier(2, code_review_context)
         self._emit("llm_end", {"role": "Judges"})
         iteration = iteration.model_copy(update={
             "judge_outputs": [*iteration.judge_outputs, *tier2_outputs],
@@ -395,14 +540,14 @@ class FamilyFlow:
         logger.info("[%s] Running tier-3 judges (result review)...", iter_id)
         self._emit("stage_changed", {"stage": "RESULT_JUDGED", "family_id": family_id, "iteration": iter_id, "detail": "Awaiting tier-3 judges..."})
         self._emit("llm_start", {"role": "Judges", "task": "Tier-3 result review (Performance, Risk)"})
-        all_metrics = {r.symbol: r.all_metrics for r in bt_results}
-        tier3_outputs = run_tier(3, {
-            "metrics": all_metrics,
-            "robustness": robustness.model_dump(),
-            "history": prior_feedback,
-            "iteration_count": iter_num,
-            "config": self._load_costs_config(),
-        }, self.client)
+        result_review_context = self._build_result_review_context(
+            bt_results,
+            robustness,
+            prior_feedback,
+            iter_num,
+            family,
+        )
+        tier3_outputs = run_tier(3, result_review_context)
         self._emit("llm_end", {"role": "Judges"})
         iteration = iteration.model_copy(update={
             "judge_outputs": [*iteration.judge_outputs, *tier3_outputs],
@@ -480,11 +625,39 @@ class FamilyFlow:
             "family_state": str(family.state),
         }
         self.store.write_ledger_entry(family_id, iter_id, entry)
-        self.store.append_history(family_id, (
-            f"Iteration {iter_id}: stage={iteration.stage}, "
+        self.store.append_history(family_id, self._build_history_entry(iteration, family))
+
+    def _build_history_entry(self, iteration: Iteration, family: IdeaFamily) -> str:
+        """Build a rich history entry including judge feedback."""
+        lines = [
+            f"Iteration {iteration.iteration_id}: stage={iteration.stage}, "
             f"verdict={iteration.verdict}, qualified={iteration.qualified_improvement}, "
-            f"strikes={family.strike_count}"
-        ))
+            f"strikes={family.strike_count}",
+        ]
+
+        if iteration.composite_score:
+            lines.append(f"Score: {iteration.composite_score.total:.3f}")
+
+        for output in iteration.judge_outputs:
+            judge = getattr(output, "judge_type", "unknown")
+            verdict = getattr(output, "verdict", "")
+            reasoning = getattr(output, "reasoning_summary", "") or getattr(output, "reasoning", "")
+            must_fix = getattr(output, "must_fix", []) or []
+
+            lines.append(f"  [{judge}] {verdict}")
+            if reasoning:
+                lines.append(f"    Reasoning: {reasoning}")
+            for item in must_fix:
+                lines.append(f"    - MUST FIX: {item}")
+
+        # Include guard failures if any
+        for g in iteration.guard_results or []:
+            if isinstance(g, dict) and not g.get("passed", True):
+                name = g.get("guard_name", "unknown")
+                violations = g.get("violations", [])
+                lines.append(f"  [guard:{name}] FAILED: {', '.join(str(v) for v in violations)}")
+
+        return "\n".join(lines)
 
     def _update_global_state(self, family: IdeaFamily) -> None:
         """Update STATE.md with current family state."""

@@ -211,6 +211,74 @@ graph LR
 
 All risk fields use `low` / `medium` / `high` string levels. Verdicts: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`.
 
+## Prompt Flow
+
+Prompt assembly is phase-specific. Researcher phases use inline `system` + `user` prompts, while judge phases load markdown system prompts from `judges/prompts/*.md` and pair them with workflow-assembled context. Judge model/provider selection is per-role via `configs/llm.yaml`; the researcher uses the `researcher` role.
+
+```mermaid
+flowchart TD
+    A[Raw Seed] --> B[Distill Seed]
+    B --> B1[System: inline seed-card schema]
+    B --> B2[User: source, raw text, seed_id]
+    B --> C[Seed Judge]
+    C --> C1[System: judges/prompts/seed_judge.md]
+    C --> C2[User: SeedCard JSON, existing families]
+
+    C --> D[FamilyFlow.run_iteration]
+
+    D --> E[Draft Plan]
+    E --> E1[Role client: researcher]
+    E --> E2[System: inline planning instructions]
+    E --> E3[User: family, accepted seed, prior feedback, hard constraints]
+
+    E --> F[Tier-1 Plan Review]
+    F --> F1[Leakage Judge]
+    F --> F2[Overfit Judge]
+    F --> F3[Realism Judge]
+    F1 --> F4[System: prompt file + User: plan, history, optional code/diff]
+    F2 --> F5[System: prompt file + User: plan, history, iteration_count]
+    F3 --> F6[System: prompt file + User: plan, costs config]
+
+    F --> G[Write Code]
+    G --> G1[Role client: researcher]
+    G --> G2[System: inline JSON file contract]
+    G --> G3[User: family, plan, prior feedback]
+    G --> G4[Revision only: existing research files, allowed files, revise-in-place guidance]
+
+    G --> H[Tier-2 Code Review]
+    H --> H1[Leakage Judge]
+    H --> H2[Code Judge]
+    H1 --> H3[System: prompt file + User: plan, full code, diff, history]
+    H2 --> H4[System: prompt file + User: plan, full code, diff, changed_files, allowed_files, forbidden_files]
+
+    H --> I[Guards / Backtest / Robustness]
+
+    I --> J[Tier-3 Result Review]
+    J --> J1[Result Judge]
+    J --> J2[Overfit Judge]
+    J --> J3[Realism Judge]
+    J1 --> J4[System: prompt file + User: metrics, robustness, history, prior_best]
+    J2 --> J5[System: prompt file + User: metrics, history, iteration_count]
+    J3 --> J6[System: prompt file + User: metrics, costs config]
+```
+
+| Phase | System Prompt Source | User Context Assembled |
+|-------|----------------------|------------------------|
+| Seed distillation | Inline in `seed_flow.py` | Raw seed source, raw text, `seed_id` |
+| Seed screening | `judges/prompts/seed_judge.md` | Distilled `SeedCard`, existing family IDs |
+| Draft plan | Inline in `researcher.py` | Family metadata, accepted seed fields, prior feedback, edit/data constraints |
+| Tier-1 plan review | Judge markdown prompt files | Plan, history, iteration count, costs config |
+| Write code | Inline in `researcher.py` | Family metadata, approved plan, prior feedback, and existing code on revision paths |
+| Tier-2 code review | Judge markdown prompt files | Plan, full code bundle, unified diff, history, changed files, allowed files, forbidden files |
+| Tier-3 result review | Judge markdown prompt files | Metrics, robustness results, history, iteration count, costs config, prior best score |
+
+Code references:
+- `alpha_forge/app/workflow/seed_flow.py`
+- `alpha_forge/app/workflow/family_flow.py`
+- `alpha_forge/app/agents/researcher.py`
+- `alpha_forge/app/agents/judge_router.py`
+- `alpha_forge/app/agents/base_judge.py`
+
 ## Deterministic Guards
 
 Five hard guards run before every backtest. No LLM — pure code checks:

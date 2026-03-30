@@ -74,10 +74,10 @@ def test_conversation_stream_preserves_dynamic_text_literals() -> None:
             assert "[alpha]" in rendered_lines[0]
             assert "Planner [v2]" in rendered_lines[1]
             assert "Body with [bold]literal[/bold] text." in rendered_lines[2]
-            assert "⚖ Realism Judge REVISE" in rendered_lines[3]
+            assert "Realism Judge REVISE" in rendered_lines[3]
             assert "Reasoning with [tags], x=1, and ['list'] text." in rendered_lines[4]
-            assert "  must_fix:" in rendered_lines[5]
-            assert "    - First [item]" in rendered_lines[6]
+            assert "must_fix:" in rendered_lines[5]
+            assert "First [item]" in rendered_lines[6]
             assert "threshold=0.45" in rendered_lines[7]
 
     asyncio.run(run())

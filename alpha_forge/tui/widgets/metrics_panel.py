@@ -10,7 +10,7 @@ class MetricsPanel(Vertical):
     """Backtest metrics table + composite score."""
 
     def compose(self) -> ComposeResult:
-        yield DataTable(id="metrics-table")
+        yield DataTable(id="metrics-table", cursor_type="row")
         yield Static("", id="composite-score")
 
     def on_mount(self) -> None:
@@ -20,6 +20,8 @@ class MetricsPanel(Vertical):
     def update_metrics(self, results: list[dict]) -> None:
         table = self.query_one("#metrics-table", DataTable)
         table.clear()
+        if not results:
+            return
         for r in results:
             table.add_row(
                 r.get("symbol", ""),

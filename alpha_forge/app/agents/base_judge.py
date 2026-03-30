@@ -29,13 +29,16 @@ class BaseJudge:
     def __init__(self, client: LLMClient | None = None, role: str | None = None) -> None:
         if client:
             self.client = client
-        elif role:
-            from alpha_forge.app.agents.llm_config import get_client_for_role
-
-            self.client = get_client_for_role(role)
         else:
             from alpha_forge.app.agents.llm_config import get_client_for_role
-            self.client = get_client_for_role("result_judge")
+
+            role_name = role
+            if role_name is None:
+                if self.judge_type and self.judge_type != "base":
+                    role_name = f"{self.judge_type}_judge"
+                else:
+                    role_name = "result_judge"
+            self.client = get_client_for_role(role_name)
 
     def _load_system_prompt(self) -> str:
         """Load the system prompt template from disk."""

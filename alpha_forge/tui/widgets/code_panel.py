@@ -17,6 +17,9 @@ class CodePanel(RichLog):
         self._previous_code: dict[str, str] = {}
         self._show_diff: bool = False
 
+    def on_mount(self) -> None:
+        self.write(Text("Waiting for code...", style="dim italic"))
+
     def update_code(self, current: dict[str, str], previous: dict[str, str] | None = None) -> None:
         self._current_code = current
         self._previous_code = previous or {}
