@@ -74,8 +74,18 @@ Keep the plan specific and implementable. Do not be vague."""
 ## Constraints
 - You may only modify: features.py, labels.py, model_config.py, signal_combiner.py
 - Available bar columns: open, high, low, close, volume, buy_volume, vwap, trade_count
-- Signals must be: 1.0 (long), -1.0 (short), 0.0 (flat), NaN (warmup)
+- Signals: values between -1.0 and 1.0 (fractional sizing allowed, e.g. 0.5 = 50% long exposure)
+  - 1.0 = fully long, -1.0 = fully short, 0.0 = flat, NaN = warmup
+  - Use fractional signals for conviction-weighted position sizing (e.g. Kelly fraction, z-score scaled)
 - No forward-looking operations (no shift(-N), no future data)
+
+## Risk Management (engine-level, set via MODEL_CONFIG)
+The backtest engine supports automatic risk management. Set these optional keys in MODEL_CONFIG:
+- "timeframe": str — REQUIRED, must match the seed horizon (e.g. "1h")
+- "stop_loss_pct": float — exit when loss exceeds this % from entry (e.g. 0.02 = 2% SL)
+- "take_profit_pct": float — exit when gain exceeds this % from entry (e.g. 0.05 = 5% TP)
+- "trailing_stop_pct": float — exit when price retraces this % from peak since entry (e.g. 0.03 = 3%)
+These are enforced by the engine using intra-bar high/low checks. The strategy code does NOT need to implement stop logic.
 
 Draft the implementation plan.
 """
@@ -119,11 +129,19 @@ Rules:
 - model_config.py must export: MODEL_CONFIG: dict
 - signal_combiner.py must export: combine_signals(features: pd.DataFrame, config: dict) -> pd.Series
 - labels.py must export: compute_labels(bars: pd.DataFrame) -> pd.Series
-- Signals: 1.0 = long, -1.0 = short, 0.0 = flat, NaN = warmup
+- Signals: values between -1.0 and 1.0. Fractional sizing is supported (e.g. 0.3 = 30% long exposure)
+  - Use conviction-weighted sizing (e.g. scale by z-score magnitude or Kelly fraction) instead of binary all-in
 - Available columns: open, high, low, close, volume, buy_volume, vwap, trade_count
 - NO forward-looking operations (shift must use positive values only)
 - NO external data sources
 - Use only: pandas, numpy (already available)
+
+MODEL_CONFIG required/optional keys:
+- "timeframe": str — REQUIRED, must match the seed horizon (e.g. "1h"). DO NOT omit this.
+- "stop_loss_pct": float — optional, engine-level stop-loss (e.g. 0.02 = 2%)
+- "take_profit_pct": float — optional, engine-level take-profit (e.g. 0.05 = 5%)
+- "trailing_stop_pct": float — optional, engine-level trailing stop (e.g. 0.03 = 3%)
+These risk params are handled by the engine automatically — do NOT implement stop logic in signal_combiner.py.
 """
 
         user_prompt = f"""## Family

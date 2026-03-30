@@ -91,15 +91,54 @@ def run_backtest(
     research_dir = store.root / "families" / family_id / "research"
     strategy = ResearchStrategy(research_dir)
 
-    # Read timeframe from family's model_config if not explicitly overridden
+    # Read timeframe: model_config > family horizon > universe default
     if timeframe_override is None:
+        resolved_tf = None
         try:
-            model_tf = strategy._config_mod.MODEL_CONFIG.get("timeframe")
-            if model_tf:
-                config = config.model_copy(update={"timeframe": model_tf})
-                logger.info("Using timeframe from model_config: %s", model_tf)
+            resolved_tf = strategy._config_mod.MODEL_CONFIG.get("timeframe")
+            if resolved_tf:
+                logger.info("Using timeframe from model_config: %s", resolved_tf)
         except Exception:
             pass
+        # Fallback: read from family's allowed_mutations.horizon
+        if not resolved_tf:
+            try:
+                family = store.read_family(family_id)
+                horizons = family.mutation_budget_horizons if hasattr(family, "mutation_budget_horizons") else None
+                if not horizons and hasattr(family, "allowed_mutations"):
+                    horizons = family.allowed_mutations.get("horizon", []) if isinstance(family.allowed_mutations, dict) else None
+                # Try reading raw FAMILY.md allowed_mutations
+                if not horizons:
+                    import yaml
+                    family_path = store.root / "families" / family_id / "FAMILY.md"
+                    if family_path.exists():
+                        text = family_path.read_text()
+                        if "---" in text:
+                            front = text.split("---")[1]
+                            meta = yaml.safe_load(front)
+                            am = meta.get("allowed_mutations", {})
+                            horizons = am.get("horizon", [])
+                if horizons and len(horizons) == 1:
+                    resolved_tf = horizons[0]
+                    logger.info("Using timeframe from family horizon: %s", resolved_tf)
+            except Exception:
+                pass
+        if resolved_tf:
+            config = config.model_copy(update={"timeframe": resolved_tf})
+
+    # Read risk management params from MODEL_CONFIG
+    try:
+        mc = strategy._config_mod.MODEL_CONFIG
+        risk_updates = {}
+        for key in ("stop_loss_pct", "take_profit_pct", "trailing_stop_pct"):
+            val = mc.get(key)
+            if val is not None:
+                risk_updates[key] = float(val)
+                logger.info("Risk param from model_config: %s=%s", key, val)
+        if risk_updates:
+            config = config.model_copy(update=risk_updates)
+    except Exception:
+        pass
 
     engine = BacktestEngine(strategy=strategy, config=config)
     results: list[BacktestResultSummary] = []

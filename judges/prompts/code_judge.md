@@ -63,6 +63,15 @@ Can the strategy logic be explained from the changed files?
 ### 7. Testability
 Can the key logic be validated with deterministic guards or simple assertions?
 
+### 8. Position sizing and risk management
+- Does signal_combiner.py use fractional position sizing (0.0 to 1.0 range) or binary all-in (only ±1.0)?
+  - Binary all-in signals are a red flag: a single bad trade risks total capital destruction.
+  - Prefer conviction-weighted sizing: scale signal magnitude by z-score, signal strength, or Kelly fraction.
+- Does model_config.py include the required `"timeframe"` key matching the seed horizon?
+- Does model_config.py include at least a `"stop_loss_pct"` for downside protection?
+  - `"stop_loss_pct"`, `"take_profit_pct"`, `"trailing_stop_pct"` are engine-level risk params.
+  - A strategy with no stop-loss and binary sizing is structurally unsound for backtest.
+
 ---
 
 ## Inputs
@@ -129,7 +138,10 @@ Rules:
 - parameter logic split across multiple helpers,
 - feature computation too indirect to audit,
 - unnecessary abstraction or metaprogramming,
-- overly broad refactor inside a narrow research iteration.
+- overly broad refactor inside a narrow research iteration,
+- binary all-in signals (only ±1.0) with no stop-loss — catastrophic risk profile,
+- missing `"timeframe"` in MODEL_CONFIG — causes silent fallback to wrong timeframe,
+- no risk management params (stop_loss_pct, take_profit_pct) in MODEL_CONFIG.
 
 ---
 

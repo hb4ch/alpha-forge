@@ -42,11 +42,17 @@ You must NOT modify:
 - `labels.py`: must export `compute_labels(bars: pd.DataFrame) -> pd.Series`
 
 ## Signal Contract
-Signals must be a pd.Series with values:
-- `1.0` = fully long
-- `-1.0` = fully short
+Signals must be a pd.Series with values between -1.0 and 1.0:
+- `1.0` = fully long, `-1.0` = fully short
+- Fractional values supported (e.g. `0.5` = 50% long exposure)
 - `0.0` = flat
 - `NaN` = no signal (warmup period)
+
+## Risk Management (MODEL_CONFIG keys)
+- `"timeframe"`: REQUIRED, must match seed horizon
+- `"stop_loss_pct"`: engine-level stop-loss (e.g. 0.02 = 2%)
+- `"take_profit_pct"`: engine-level take-profit (e.g. 0.05 = 5%)
+- `"trailing_stop_pct"`: engine-level trailing stop (e.g. 0.03 = 3%)
 
 ## Available Bar Columns
 `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`

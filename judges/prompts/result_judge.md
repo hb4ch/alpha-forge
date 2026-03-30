@@ -72,6 +72,12 @@ Is the improvement meaningful relative to prior attempts, or just noise after re
 ### 7. Promotion worthiness
 Is this strong enough to justify holdout or paper-forward?
 
+### 8. Risk management effectiveness
+- Was stop-loss / take-profit configured? Check if `stop_loss_pct`, `take_profit_pct`, or `trailing_stop_pct` appear in the results or config.
+- If max drawdown exceeds 50%, this strongly suggests missing or inadequate risk management.
+- If the strategy lost >90% of capital, reject regardless of other metrics — no risk management can excuse total capital destruction.
+- Was position sizing fractional or binary? A strategy using all-in ±1.0 signals with no stops is structurally broken.
+
 ---
 
 ## Inputs
@@ -141,7 +147,10 @@ Rules:
 - delay perturbation kills the edge,
 - robustness tests are inconsistent,
 - improvement is tiny after many nearby iterations,
-- the family is being kept alive by marginal gains.
+- the family is being kept alive by marginal gains,
+- max drawdown > 50% with no stop-loss configured — broken risk management,
+- total capital destruction (>90% loss) — automatic reject regardless of other factors,
+- binary all-in signals with no stops — structurally unsound for any promotion.
 
 ---
 

@@ -64,6 +64,15 @@ Is the idea assumed portable across venues without accounting for book structure
 ### 7. Capacity realism
 Would the edge survive even modest scale, or is it a tiny backtest niche?
 
+### 8. Position sizing realism
+- Are positions sized appropriately for the signal's conviction and edge magnitude?
+  - Binary all-in (±1.0) with thin edges (< 50 bps per trade) is unrealistic — real traders never go 100% on a single microstructural signal.
+  - Fractional sizing scaled by signal strength (e.g. z-score magnitude, Kelly fraction) is more realistic.
+- Is stop-loss / take-profit configured in MODEL_CONFIG?
+  - A strategy with no stop-loss that goes all-in will produce catastrophic drawdowns in live trading.
+  - At minimum, `stop_loss_pct` should be set. `take_profit_pct` and `trailing_stop_pct` are recommended.
+  - These are engine-level params — the strategy code should NOT implement its own stop logic.
+
 ---
 
 ## Inputs
@@ -135,7 +144,10 @@ Rules:
 - extremely high turnover with low gross edge,
 - edge concentrated in illiquid periods or tail events,
 - portability claims across venues with no structure discussion,
-- alpha that disappears under mild cost stress.
+- alpha that disappears under mild cost stress,
+- binary all-in position sizing (±1.0) on a microstructural signal — no real trader does this,
+- no stop-loss configured — leads to total capital destruction on adverse moves,
+- position sizing disconnected from edge magnitude or signal conviction.
 
 ---
 
