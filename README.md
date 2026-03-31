@@ -34,76 +34,55 @@ Alpha Forge addresses all three by treating alpha research as a **controlled exp
 
 ## Architecture
 
-```
-                         ┌─────────────────────┐
-                         │   Seed Intake        │
-                         │  (papers, tweets,    │
-                         │   blog posts)        │
-                         └─────────┬────────────┘
-                                   │
-                         ┌─────────▼────────────┐
-                         │  Distillation (LLM)   │
-                         │  → SeedCard           │
-                         └─────────┬────────────┘
-                                   │
-                         ┌─────────▼────────────┐
-                         │  Seed Judge           │
-                         │  accept / reject /    │
-                         │  narrow / merge       │
-                         └─────────┬────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │       Family Created         │
-                    │  (hypothesis + mechanism +   │
-                    │   mutation budget)            │
-                    └──────────────┬──────────────┘
-                                   │
-            ┌──────────────────────▼──────────────────────┐
-            │              ITERATION LOOP                  │
-            │                                              │
-            │  ┌──────────┐    ┌───────────┐               │
-            │  │ Draft     │───▶ Tier-1     │               │
-            │  │ Plan      │    │ Judges    │               │
-            │  └──────────┘    │ (plan)     │               │
-            │                  └─────┬─────┘               │
-            │                        │                     │
-            │  ┌──────────┐    ┌─────▼─────┐               │
-            │  │ Write     │───▶ Tier-2     │               │
-            │  │ Code      │    │ Judges    │               │
-            │  └──────────┘    │ (code)     │               │
-            │                  └─────┬─────┘               │
-            │                        │                     │
-            │  ┌──────────────────┐  │                     │
-            │  │ Deterministic    │◀─┘                     │
-            │  │ Guards (5x)      │                        │
-            │  └────────┬─────────┘                        │
-            │           │                                  │
-            │  ┌────────▼─────────┐                        │
-            │  │ Backtest          │                        │
-            │  │ (crypto-pegasus)  │                        │
-            │  └────────┬─────────┘                        │
-            │           │                                  │
-            │  ┌────────▼─────────┐                        │
-            │  │ Robustness        │                        │
-            │  │ Battery (5 tests) │                        │
-            │  └────────┬─────────┘                        │
-            │           │                                  │
-            │  ┌────────▼─────────┐    ┌────────────────┐  │
-            │  │ Tier-3 Judges    │───▶│ Score &        │  │
-            │  │ (results)        │    │ Decide         │  │
-            │  └──────────────────┘    └───────┬────────┘  │
-            │                                  │           │
-            │          ┌───────────────────────┼───────┐   │
-            │          │                       │       │   │
-            │     Strike added            Qualified   Reject│
-            │     (iterate)             improvement        │
-            │          │                       │           │
-            └──────────┼───────────────────────┼───────────┘
-                       │                       │
-                       ▼                       ▼
-                 3 strikes?              Holdout → Paper
-                 → CANCELLED             → Human Review
-                                         → DONE
+```mermaid
+%%{init: {
+  "theme": "base",
+  "look": "handDrawn",
+  "flowchart": { "curve": "basis", "nodeSpacing": 32, "rankSpacing": 36 },
+  "themeVariables": {
+    "primaryColor": "#FFF3B0",
+    "primaryTextColor": "#3D2F2F",
+    "primaryBorderColor": "#D97706",
+    "lineColor": "#B45309",
+    "secondaryColor": "#C7F9CC",
+    "tertiaryColor": "#FBCFE8",
+    "clusterBkg": "#FFF7ED",
+    "clusterBorder": "#EA580C",
+    "fontFamily": "Trebuchet MS, Comic Sans MS, Marker Felt, sans-serif",
+    "fontSize": "16px"
+  }
+}}%%
+flowchart TD
+    A["Seed Intake<br/>(papers, tweets, blog posts)"]:::warm --> B["Distillation (LLM)<br/>SeedCard"]:::sky
+    B --> C["Seed Judge<br/>accept / reject / narrow / merge"]:::pink
+    C --> D["Family Created<br/>(hypothesis + mechanism + mutation budget)"]:::warm
+
+    subgraph LOOP["Iteration Loop"]
+        direction TD
+        E["Draft Plan"]:::sky --> F["Tier-1 Judges<br/>(plan)"]:::pink
+        F --> G["Write Code"]:::sky
+        G --> H["Tier-2 Judges<br/>(code)"]:::pink
+        H --> I["Deterministic Guards<br/>(5x)"]:::mint
+        I --> J["Backtest<br/>(crypto-pegasus)"]:::warm
+        J --> K["Robustness Battery<br/>(5 tests)"]:::mint
+        K --> L["Tier-3 Judges<br/>(results)"]:::pink
+        L --> M{"Score & Decide"}:::decision
+    end
+
+    D --> E
+    M -->|"Strike added"| N["3 strikes?<br/>CANCELLED"]:::danger
+    M -->|"Qualified improvement"| O["Holdout"]:::sky
+    M -->|"Reject"| E
+    O --> P["Paper"]:::warm
+    P --> Q["Human Review"]:::mint
+    Q --> R["DONE"]:::mint
+
+    classDef warm fill:#FFF3B0,stroke:#D97706,color:#3D2F2F,stroke-width:3px;
+    classDef sky fill:#BFDBFE,stroke:#2563EB,color:#1E3A8A,stroke-width:3px;
+    classDef pink fill:#FBCFE8,stroke:#DB2777,color:#831843,stroke-width:3px;
+    classDef mint fill:#C7F9CC,stroke:#16A34A,color:#14532D,stroke-width:3px;
+    classDef decision fill:#FDE68A,stroke:#B45309,color:#78350F,stroke-width:4px;
+    classDef danger fill:#FECACA,stroke:#DC2626,color:#7F1D1D,stroke-width:4px;
 ```
 
 <p align="center">
