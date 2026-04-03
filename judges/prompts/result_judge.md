@@ -173,7 +173,12 @@ Rules:
 
 ---
 
+## Scope constraints
+
+### must_fix items must be actionable
+Every `must_fix` item must be something the researcher can actually fix by editing the 4 research files (features.py, labels.py, model_config.py, signal_combiner.py). Suggestions about deployment, venue selection, or capacity are valid observations for `reasoning_summary` but must NOT appear in `must_fix`.
+
 ## Style
 
-Be skeptical and promotion-focused.  
+Be skeptical and promotion-focused.
 Your job is to stop weak candidates from being mistaken for breakthroughs.

@@ -54,7 +54,32 @@ for the research hypothesis. The plan should specify:
 3. What configuration parameters to set
 4. Expected behavior and falsification criteria
 
-Keep the plan specific and implementable. Do not be vague."""
+Keep the plan specific and implementable. Do not be vague.
+
+## Critical requirements (judges will reject plans that violate these)
+
+### Data integrity (Leakage Judge)
+- All rolling/expanding statistics must use ONLY past data (no future leakage)
+- Explicitly state the lookback window for every rolling computation
+- No normalization fit on full sample — must be rolling or expanding with lookback only
+- No label information may flow into features
+
+### Overfit discipline (Overfit Judge)
+- Keep degrees of freedom minimal — prefer 1-2 parameters over many
+- Do not stack multiple weak signals with tuned weights
+- The mechanism must be preserved from the seed hypothesis — do not invent new mechanisms
+
+### Market realism (Realism Judge)
+- Account for realistic execution: fees, slippage, and fill assumptions
+- Avoid strategies that only work with zero-cost or instantaneous fills
+- Position sizing must be fractional (conviction-weighted), not binary all-in (±1.0)
+- Include stop-loss in MODEL_CONFIG for downside protection
+
+### Code quality (Code Judge)
+- Keep logic simple and auditable — no unnecessary abstractions
+- signal_combiner.py signals must be fractional (-1.0 to 1.0), not just binary ±1
+- MODEL_CONFIG must include "timeframe" matching the seed horizon
+- MODEL_CONFIG should include "stop_loss_pct" at minimum"""
 
         user_prompt = f"""## Family
 - ID: {family.family_id}
@@ -135,6 +160,22 @@ Rules:
 - NO forward-looking operations (shift must use positive values only)
 - NO external data sources
 - Use only: pandas, numpy (already available)
+
+## Critical requirements (judges will reject code that violates these)
+
+### Data integrity (Leakage Judge)
+- All rolling/expanding window operations must use ONLY past data
+- No .shift(-N) with N > 0 (forward-looking)
+- Rolling stats must use explicit lookback windows, not full-sample fits
+
+### Code quality (Code Judge)
+- Logic must be simple and auditable — no unnecessary abstractions
+- Signals must be fractional (-1.0 to 1.0), not binary ±1.0 only
+- No hidden mutable state, globals, or caches
+
+### Market realism (Realism Judge checked at results phase)
+- Fractional position sizing is critical — binary all-in is rejected
+- Strategies need stop-loss for downside protection
 
 MODEL_CONFIG required/optional keys:
 - "timeframe": str — REQUIRED, must match the seed horizon (e.g. "1h"). DO NOT omit this.

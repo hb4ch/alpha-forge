@@ -379,10 +379,16 @@ class AlphaForgeApp(App):
         family = store.read_family(family_id)
         old_strikes = family.strike_count
         family = reset_strikes(family)
-        family = family.model_copy(update={"state": FamilyState.QUEUED})
+        # Preserve revision states so orchestrator resumes at the right phase
+        revision_states = {
+            FamilyState.PLAN_REVISION_REQUIRED,
+            FamilyState.CODE_REVISION_REQUIRED,
+        }
+        new_state = family.state if family.state in revision_states else FamilyState.QUEUED
+        family = family.model_copy(update={"state": new_state})
         store.write_family(family)
         conv.add_system_message(
-            f"Strikes reset on {family_id}: {old_strikes} → 0, state → QUEUED"
+            f"Strikes reset on {family_id}: {old_strikes} → 0, state → {new_state.value}"
         )
 
     def _do_retry(self, conv: ConversationStream) -> None:

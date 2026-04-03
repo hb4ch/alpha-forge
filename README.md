@@ -5,7 +5,7 @@
 <h3 align="center">Adversarial, Mutation-Bounded Crypto Alpha Research Loop</h3>
 
 <p align="center">
-  <em>File-native state &bull; Tiered LLM judges &bull; Deterministic guards &bull; 3-strikes cancellation</em>
+  <em>File-native state &bull; Tiered LLM judges &bull; Deterministic guards &bull; Fractional sizing &bull; Engine-level risk management</em>
 </p>
 
 ---
@@ -70,9 +70,9 @@ flowchart TD
     end
 
     D --> E
-    M -->|"Strike added"| N["3 strikes?<br/>CANCELLED"]:::danger
+    M -->|"Strike (reject only)"| N["3 strikes?<br/>CANCELLED"]:::danger
     M -->|"Qualified improvement"| O["Holdout"]:::sky
-    M -->|"Reject"| E
+    M -->|"Revise (no strike)"| E
     O --> P["Paper"]:::warm
     P --> Q["Human Review"]:::mint
     Q --> R["DONE"]:::mint
@@ -91,7 +91,7 @@ flowchart TD
 
 ## Family Lifecycle — State Machine
 
-Every research family moves through a deterministic state machine with 20 states and 31 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`.
+Every research family moves through a deterministic state machine with 20 states and 31 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`. Note: plan and code revision loops are **strike-free** — only explicit `reject` verdicts add strikes, allowing unlimited refinement iterations.
 
 ```mermaid
 stateDiagram-v2
@@ -148,7 +148,7 @@ stateDiagram-v2
 
 ## Tiered Judge Pipeline
 
-Seven adversarial LLM judges organized in three tiers, each with structured JSON output schemas:
+Seven adversarial LLM judges organized in three tiers, running concurrently within each tier via `ThreadPoolExecutor`. Each judge produces structured JSON output:
 
 ```mermaid
 graph LR
@@ -285,12 +285,14 @@ Each family gets a finite budget for modifications. This prevents unconstrained 
 
 When a mutation exceeds its category budget, the Mutation Judge can recommend `fork_required` to spawn a child family instead.
 
-## 3-Strikes Policy
+## Strike Policy
 
-- **3 regular strikes** or **2 red strikes** = family cancelled (`CANCELLED_3_STRIKES`)
+- **3 regular strikes** or **2 red strikes** = family paused for review (`PAUSED_FOR_REVIEW`)
+- **Plan/code revision loops are strike-free** — `revise` verdicts do not add strikes, allowing the researcher to iterate indefinitely until the judges are satisfied or explicitly `reject`
+- Only `reject` verdicts from judges, guard failures, and unqualified results add strikes
 - Strikes reset **only** on qualified improvement (not merely on approval)
 - Red strikes are issued for severe violations (edit surface breaches, data contamination)
-- Cancellation overrides any pending transition — checked after every strike update
+- Strike check overrides any pending transition — evaluated after every strike update
 
 ## Installation
 
@@ -298,7 +300,7 @@ When a mutation exceeds its category budget, the Mutation Judge can recommend `f
 
 - Python 3.11+
 - [crypto-pegasus](https://github.com/your-org/crypto-pegasus) backtest engine (sibling directory)
-- Anthropic API key (`ANTHROPIC_API_KEY` env var)
+- LLM provider API keys configured in `configs/llm.yaml` (supports Anthropic, OpenAI-compatible endpoints)
 
 ### Setup
 
@@ -313,8 +315,8 @@ pip install -e .
 # Install crypto-pegasus (backtest engine)
 pip install -e ../crypto-pegasus
 
-# Set API key
-export ANTHROPIC_API_KEY="sk-ant-..."
+# Configure LLM providers in configs/llm.yaml
+# Supports Anthropic + any OpenAI-compatible endpoint (BigModel, vLLM, etc.)
 ```
 
 ## Usage
@@ -416,7 +418,15 @@ Each family gets 4 editable Python files in `research/`. These are the **only** 
 | `model_config.py` | `MODEL_CONFIG` | `dict` |
 | `signal_combiner.py` | `combine_signals` | `(features: pd.DataFrame, config: dict) -> pd.Series` |
 
-**Signal contract**: Values must be `1.0` (long), `-1.0` (short), `0.0` (flat), or `NaN` (warmup).
+**Signal contract**: Values between `-1.0` and `1.0`. Fractional values represent exposure fraction (e.g. `0.5` = 50% long). `0.0` = flat, `NaN` = warmup/no signal.
+
+**MODEL_CONFIG keys**:
+- `"timeframe"` — **required**, must match seed horizon (e.g. `"1h"`)
+- `"stop_loss_pct"` — engine-level stop-loss (e.g. `0.02` = 2%)
+- `"take_profit_pct"` — engine-level take-profit (e.g. `0.05` = 5%)
+- `"trailing_stop_pct"` — engine-level trailing stop (e.g. `0.03` = 3%)
+
+Risk management is handled by the crypto-pegasus engine (intra-bar high/low checks, Numba JIT). Strategy code should **not** implement its own stop logic.
 
 **Available bar columns**: `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`
 
@@ -557,6 +567,9 @@ alpha-forge/
 - **Mutation budgets** — Finite budget per mutation category prevents unconstrained parameter search.
 - **Separation of concerns** — The researcher generates, judges evaluate, guards enforce, the orchestrator manages.
 - **Qualified improvement only** — Strikes reset only when the strategy actually gets meaningfully better.
+- **Unlimited revision loops** — Plan and code revisions don't consume strikes, enabling thorough iterative refinement.
+- **Engine-level risk management** — Stop-loss, take-profit, and trailing stops are handled by crypto-pegasus, not strategy code.
+- **Fractional position sizing** — Signals express conviction as continuous values, not binary all-in bets.
 
 ## License
 

@@ -184,6 +184,19 @@ Often should fork, not mutate.
 
 ---
 
+## Scope constraints
+
+### What you CANNOT demand
+- **Unit tests**: The researcher can only write 4 files (features.py, labels.py, model_config.py, signal_combiner.py). It cannot write test files.
+- **Engine modifications**: The backtest engine is immutable.
+- **Config changes**: `configs/costs.yaml` and `configs/splits.yaml` are system-level and immutable.
+
+### must_fix items must be actionable
+Every `must_fix` item must be something the researcher can actually fix by editing the 4 research files. If an issue is outside the researcher's control, note it in `reasoning_summary` but do NOT put it in `must_fix`.
+
+### Implementation failures are not overfit
+If prior iterations failed due to code bugs, config mismatches, or empty code sections, those are implementation failures — NOT evidence of search abuse or overfit. Do not penalize a family for high iteration counts caused by implementation debugging.
+
 ## Review stance
 
 Assume most "improvements" after repeated failures are overfit until proven otherwise.

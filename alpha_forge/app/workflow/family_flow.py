@@ -161,6 +161,24 @@ class FamilyFlow:
 
         return "".join(diff_parts) or "No textual changes detected."
 
+    @staticmethod
+    def _extract_judge_feedback(judge_outputs: list) -> list[str]:
+        """Extract must_fix items and reasoning from judge outputs into actionable feedback."""
+        feedback: list[str] = []
+        for output in judge_outputs:
+            judge_type = getattr(output, "judge_type", "unknown")
+            verdict = getattr(output, "verdict", "")
+            reasoning = getattr(output, "reasoning_summary", "") or getattr(output, "reasoning", "")
+            must_fix = getattr(output, "must_fix", []) or []
+            if must_fix or reasoning:
+                parts = [f"[{judge_type}] verdict={verdict}"]
+                if reasoning:
+                    parts.append(f"  Reasoning: {reasoning}")
+                for item in must_fix:
+                    parts.append(f"  MUST FIX: {item}")
+                feedback.append("\n".join(parts))
+        return feedback
+
     def _build_plan_context(
         self,
         family: IdeaFamily,
@@ -345,7 +363,21 @@ class FamilyFlow:
             logger.info("[%s] Drafting plan...", iter_id)
             self._emit("stage_changed", {"stage": "DRAFT_PLAN", "family_id": family_id, "iteration": iter_id})
             self._emit("llm_start", {"role": "Researcher", "task": "Drafting plan"})
-            plan_context = self._build_plan_context(family, seed, prior_feedback)
+            # On plan revision, surface the judge feedback that triggered the revision
+            plan_feedback = list(prior_feedback) if prior_feedback else []
+            if not started_new_cycle:
+                # This is a revision — load previous iteration's judge outputs
+                try:
+                    prev_iter = self.store.read_current_iteration(family_id)
+                    if prev_iter and prev_iter.judge_outputs:
+                        judge_fb = self._extract_judge_feedback(prev_iter.judge_outputs)
+                        if judge_fb:
+                            plan_feedback.append(
+                                "## REVISION REQUIRED — Judge feedback to address:\n" + "\n\n".join(judge_fb)
+                            )
+                except Exception:
+                    pass
+            plan_context = self._build_plan_context(family, seed, plan_feedback)
             plan = self.researcher.draft_plan(
                 plan_context["family"],
                 plan_context["seed"],
@@ -383,12 +415,20 @@ class FamilyFlow:
                 "tier": 1, "verdict": str(tier1_verdict), "outputs": [o.model_dump() for o in tier1_outputs],
                 "family_id": family_id, "iteration": iter_id,
             })
-            if tier1_verdict in (Verdict.REJECT, Verdict.REVISE):
+            if tier1_verdict == Verdict.REJECT:
                 logger.warning("[%s] Plan rejected by tier-1 judges", iter_id)
                 family = self._transition_family(family, FamilyEvent.PLAN_REJECTED, context={
                     "strike_reason": "Plan rejected",
                     "iteration_id": iter_id,
                 })
+                iteration = iteration.model_copy(update={
+                    "stage": IterationStage.ITERATION_FAILED,
+                    "verdict": tier1_verdict,
+                })
+                return self._finalize_iteration(family_id, iteration, family)
+            elif tier1_verdict == Verdict.REVISE:
+                logger.info("[%s] Plan revision requested by tier-1 judges (no strike)", iter_id)
+                family = self._transition_family(family, FamilyEvent.PLAN_REJECTED)
                 iteration = iteration.model_copy(update={
                     "stage": IterationStage.ITERATION_FAILED,
                     "verdict": tier1_verdict,
@@ -407,10 +447,15 @@ class FamilyFlow:
         old_code = self._read_research_code_dict(family_id)
         if started_new_cycle and old_code and iter_num > 1:
             self.artifact_store.save_code_snapshot(family_id, iter_num - 1, old_code)
+        # Enrich feedback with judge must_fix items from this iteration
+        code_feedback = list(prior_feedback) if prior_feedback else []
+        judge_feedback = self._extract_judge_feedback(iteration.judge_outputs)
+        if judge_feedback:
+            code_feedback.append("## Judge feedback from this iteration (address these):\n" + "\n\n".join(judge_feedback))
         code_write_context = self._build_code_write_context(
             family,
             plan,
-            prior_feedback,
+            code_feedback,
             existing_code=old_code if family.state == FamilyState.CODE_REVISION_REQUIRED else None,
         )
         code_files = self.researcher.write_code(
@@ -457,12 +502,20 @@ class FamilyFlow:
             "tier": 2, "verdict": str(tier2_verdict), "outputs": [o.model_dump() for o in tier2_outputs],
             "family_id": family_id, "iteration": iter_id,
         })
-        if tier2_verdict in (Verdict.REJECT, Verdict.REVISE):
+        if tier2_verdict == Verdict.REJECT:
             logger.warning("[%s] Code rejected by tier-2 judges", iter_id)
             family = self._transition_family(family, FamilyEvent.CODE_REJECTED, context={
                 "strike_reason": "Code rejected by tier-2 judges",
                 "iteration_id": iter_id,
             })
+            iteration = iteration.model_copy(update={
+                "stage": IterationStage.ITERATION_FAILED,
+                "verdict": tier2_verdict,
+            })
+            return self._finalize_iteration(family_id, iteration, family)
+        elif tier2_verdict == Verdict.REVISE:
+            logger.info("[%s] Code revision requested by tier-2 judges (no strike)", iter_id)
+            family = self._transition_family(family, FamilyEvent.CODE_REJECTED)
             iteration = iteration.model_copy(update={
                 "stage": IterationStage.ITERATION_FAILED,
                 "verdict": tier2_verdict,

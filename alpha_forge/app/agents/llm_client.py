@@ -54,7 +54,7 @@ class LLMClient:
         self,
         system: str,
         user_prompt: str,
-        max_tokens: int = 128000,
+        max_tokens: int = 65536,
         temperature: float = 0.0,
         stream_callback: Callable[[str], None] | None = None,
     ) -> str:
@@ -180,7 +180,7 @@ class LLMClient:
         self,
         system: str,
         user_prompt: str,
-        max_tokens: int = 128000,
+        max_tokens: int = 65536,
         temperature: float = 0.0,
         stream_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
