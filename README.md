@@ -73,6 +73,7 @@ flowchart TD
     M -->|"Strike (reject only)"| N["3 strikes?<br/>CANCELLED"]:::danger
     M -->|"Qualified improvement"| O["Holdout"]:::sky
     M -->|"Revise (no strike)"| E
+    J -->|"Runtime error"| G
     O --> P["Paper"]:::warm
     P --> Q["Human Review"]:::mint
     Q --> R["DONE"]:::mint
@@ -91,7 +92,7 @@ flowchart TD
 
 ## Family Lifecycle — State Machine
 
-Every research family moves through a deterministic state machine with 20 states and 31 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`. Note: plan and code revision loops are **strike-free** — only explicit `reject` verdicts add strikes, allowing unlimited refinement iterations.
+Every research family moves through a deterministic state machine with 20 states and 32 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`. Plan and code revision loops are **strike-free** — only explicit `reject` verdicts add strikes, allowing unlimited refinement iterations. Backtest runtime errors (assertion failures, code bugs) route back to `CODE_REVISION_REQUIRED` for automatic repair.
 
 ```mermaid
 stateDiagram-v2
@@ -121,6 +122,7 @@ stateDiagram-v2
     GUARDS_RUNNING --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
 
     BACKTEST_RUNNING --> RESULTS_IN_REVIEW : BACKTEST_COMPLETED
+    BACKTEST_RUNNING --> CODE_REVISION_REQUIRED : BACKTEST_FAILED
     BACKTEST_RUNNING --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
 
     RESULTS_IN_REVIEW --> PROMOTE_TO_HOLDOUT : RESULT_APPROVED
@@ -315,8 +317,9 @@ pip install -e .
 # Install crypto-pegasus (backtest engine)
 pip install -e ../crypto-pegasus
 
-# Configure LLM providers in configs/llm.yaml
-# Supports Anthropic + any OpenAI-compatible endpoint (BigModel, vLLM, etc.)
+# Configure LLM providers — add API keys to .env (git-ignored)
+cp .env.example .env  # then edit with your keys
+# configs/llm.yaml references keys via api_key_env (e.g. BIGMODEL_API_KEY)
 ```
 
 ## Usage
