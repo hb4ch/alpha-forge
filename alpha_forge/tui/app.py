@@ -64,6 +64,8 @@ class AlphaForgeApp(App):
 
     CSS_PATH = str(CSS_PATH)
 
+    ALLOW_SELECT = True
+
     BINDINGS = [
         Binding("shift+tab", "toggle_mode", "Toggle autopilot/semi-auto"),
         Binding("tab", "focus_next", "Focus next panel"),
@@ -75,6 +77,7 @@ class AlphaForgeApp(App):
         Binding("slash", "show_command", "Command palette"),
         Binding("d", "toggle_diff", "Toggle diff", show=False),
         Binding("p", "toggle_pause", "Pause/resume", show=False),
+        Binding("ctrl+c", "copy_selection", "Copy selection", show=False, priority=True),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -107,7 +110,21 @@ class AlphaForgeApp(App):
         loop = asyncio.get_event_loop()
         self._bus = EventBus(loop, app=self)
 
-        # Install log handler
+        # Install file log handler — persist all runtime logs to disk
+        log_dir = Path(self.workspace) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime
+        log_file = log_dir / f"tui_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        )
+        file_handler.setLevel(logging.DEBUG)
+        logging.root.addHandler(file_handler)
+        logging.root.setLevel(logging.DEBUG)
+        logger.info("TUI log file: %s", log_file)
+
+        # Install TUI log panel handler
         log_panel = self.query_one("#log-panel", LogPanel)
         log_panel.install_handler()
 
@@ -277,6 +294,25 @@ class AlphaForgeApp(App):
                 pass
 
     # --- Actions ---
+
+    def action_copy_selection(self) -> None:
+        """Copy current text selection to system clipboard."""
+        # Try to get selection from the focused widget
+        focused = self.focused
+        if focused and hasattr(focused, "text_selection"):
+            selection = focused.text_selection
+            if selection:
+                self.copy_to_clipboard(selection)
+                self.notify("Copied to clipboard", severity="information", timeout=1.5)
+                return
+        # Fallback: try get_selection on focused widget
+        if focused and hasattr(focused, "get_selection"):
+            selection = focused.get_selection()
+            if selection:
+                self.copy_to_clipboard(selection)
+                self.notify("Copied to clipboard", severity="information", timeout=1.5)
+                return
+        self.notify("No text selected", severity="warning", timeout=1.5)
 
     def action_toggle_mode(self) -> None:
         if self._mode == "autopilot":

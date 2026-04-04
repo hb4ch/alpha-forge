@@ -250,6 +250,14 @@ class FamilyFlow:
             return []
         return [history_path.read_text()]
 
+    def _append_history(self, family_id: str, entry: str) -> None:
+        """Append a free-form entry to the family's HISTORY.md."""
+        from datetime import datetime, timezone
+        history_path = self.store.root / "families" / family_id / "HISTORY.md"
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with open(history_path, "a") as f:
+            f.write(f"\n## [{timestamp}]\n{entry}\n")
+
     def _transition_family(
         self,
         family: IdeaFamily,
@@ -558,7 +566,21 @@ class FamilyFlow:
         iteration = iteration.model_copy(update={"stage": IterationStage.RUN_BACKTEST})
         self.store.write_iteration(iteration)
 
-        bt_results = run_backtest(family_id, self.store, self.configs_dir)
+        try:
+            bt_results = run_backtest(family_id, self.store, self.configs_dir)
+        except Exception as e:
+            error_msg = f"Backtest runtime error: {type(e).__name__}: {e}"
+            logger.error("[%s] %s", iter_id, error_msg)
+            self._emit("stage_changed", {"stage": "BACKTEST_FAILED", "family_id": family_id, "iteration": iter_id, "detail": error_msg})
+            # Append error to history so the researcher sees it on revision
+            self._append_history(family_id, f"Iteration {iter_id}: BACKTEST RUNTIME ERROR\n  {error_msg}")
+            family = self._transition_family(family, FamilyEvent.BACKTEST_FAILED)
+            iteration = iteration.model_copy(update={
+                "stage": IterationStage.ITERATION_FAILED,
+                "verdict": Verdict.REVISE,
+            })
+            return self._finalize_iteration(family_id, iteration, family)
+
         iteration = iteration.model_copy(update={
             "backtest_results": bt_results,
         })
@@ -581,7 +603,18 @@ class FamilyFlow:
         iteration = iteration.model_copy(update={"stage": IterationStage.RUN_ROBUSTNESS})
         self.store.write_iteration(iteration)
 
-        robustness = run_robustness_battery(family_id, self.store, bt_results, self.configs_dir)
+        try:
+            robustness = run_robustness_battery(family_id, self.store, bt_results, self.configs_dir)
+        except Exception as e:
+            error_msg = f"Robustness runtime error: {type(e).__name__}: {e}"
+            logger.error("[%s] %s", iter_id, error_msg)
+            self._emit("stage_changed", {"stage": "ROBUSTNESS_FAILED", "family_id": family_id, "iteration": iter_id, "detail": error_msg})
+            self._append_history(family_id, f"Iteration {iter_id}: ROBUSTNESS RUNTIME ERROR\n  {error_msg}")
+            # Still have backtest results — proceed to tier-3 with empty robustness
+            from alpha_forge.app.domain.models import RobustnessResult
+            robustness = RobustnessResult(tests=[])
+            logger.warning("[%s] Proceeding to tier-3 with empty robustness results", iter_id)
+
         iteration = iteration.model_copy(update={"robustness_results": robustness})
         self.store.write_iteration(iteration)
         self.artifact_store.save_robustness_result(

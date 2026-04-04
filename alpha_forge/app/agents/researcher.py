@@ -102,7 +102,8 @@ Keep the plan specific and implementable. Do not be vague.
 - Signals: values between -1.0 and 1.0 (fractional sizing allowed, e.g. 0.5 = 50% long exposure)
   - 1.0 = fully long, -1.0 = fully short, 0.0 = flat, NaN = warmup
   - Use fractional signals for conviction-weighted position sizing (e.g. Kelly fraction, z-score scaled)
-- No forward-looking operations (no shift(-N), no future data)
+- No forward-looking operations — .shift(-N) is FORBIDDEN and will fail the time integrity guard
+- For forward returns in labels.py, use numpy array slicing: `ret[:n-k] = (close[k:] - close[:n-k]) / close[:n-k]`
 
 ## Risk Management (engine-level, set via MODEL_CONFIG)
 The backtest engine supports automatic risk management. Set these optional keys in MODEL_CONFIG:
@@ -157,7 +158,10 @@ Rules:
 - Signals: values between -1.0 and 1.0. Fractional sizing is supported (e.g. 0.3 = 30% long exposure)
   - Use conviction-weighted sizing (e.g. scale by z-score magnitude or Kelly fraction) instead of binary all-in
 - Available columns: open, high, low, close, volume, buy_volume, vwap, trade_count
-- NO forward-looking operations (shift must use positive values only)
+- NO forward-looking operations — .shift(-N) is FORBIDDEN and will fail the time integrity guard
+- For labels.py (forward returns): use numpy array slicing instead of shift(-N).
+  Example: `ret = np.full(n, np.nan); ret[:n-k] = (close[k:] - close[:n-k]) / close[:n-k]`
+  This computes forward returns without using shift(-N).
 - NO external data sources
 - Use only: pandas, numpy (already available)
 

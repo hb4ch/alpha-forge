@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import dotenv
 import yaml
+
+# Load .env from project root (if present) so api_key_env references resolve
+dotenv.load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "llm.yaml"
