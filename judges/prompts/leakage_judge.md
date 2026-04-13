@@ -37,10 +37,6 @@ You must return one of:
 - `approve`
 - `approve_with_constraints`
 - `revise`
-- `reject`
-- `fork_required`
-
-`fork_required` should be rare and used only when the proposal changes the problem so much that leakage review can no longer be interpreted inside the current family.
 
 ---
 
@@ -134,13 +130,12 @@ Required schema:
 
 Allowed values:
 
-- `verdict`: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`
-- risk fields: `low`, `medium`, `high`
+- `verdict`: `approve`, `approve_with_constraints`, `revise`
+- risk fields: `low`, `medium`, `high`, `critical`
 
 Rules:
 
-- Prefer `revise` when a fix is plausible.
-- Use `reject` for severe leakage risk or repeated violation patterns.
+- Prefer `revise` when a fix is plausible — always coach the researcher on what to change.
 - `must_fix` must be concrete and operational.
 - `required_tests` should be minimal and specific.
 - Do not output anything before the JSON object.
@@ -204,10 +199,21 @@ If the answer is unclear, increase risk.
 ### Revise when
 - the issue is likely fixable and the mechanism itself is still usable.
 
-### Reject when
-- leakage appears material,
-- contamination is repeated,
-- or the plan/code relies on unsafe assumptions.
+### Revise when
+- leakage appears material — coach the researcher on exactly what to fix.
+- the plan/code relies on unsafe assumptions — explain what's unsafe and how to make it safe.
+
+---
+
+## Coaching mandate
+
+When issuing `revise`, you MUST provide specific, actionable coaching in `must_fix`. Explain:
+1. **What** the leakage risk is (e.g. "rolling z-score uses full-sample mean")
+2. **Why** it's harmful (e.g. "the model sees future distributional information at each decision point")
+3. **What to do instead** (e.g. "use an expanding-window mean that only includes data up to the current bar")
+
+Bad: "Possible time leakage."
+Good: "features.py line 42 computes `(close - close.mean()) / close.std()` — this uses the full-sample mean/std including future bars. Replace with `close.expanding().mean()` and `close.expanding().std()` to use only past data."
 
 ---
 

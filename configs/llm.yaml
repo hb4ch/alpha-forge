@@ -16,9 +16,9 @@ tiers:
 roles:
   researcher: heavy
   seed_judge: heavy
-  leakage_judge: light
+  leakage_judge: heavy
   overfit_judge: heavy
-  realism_judge: light
-  code_judge: light
+  realism_judge: heavy
+  code_judge: heavy
   result_judge: heavy
   mutation_judge: heavy

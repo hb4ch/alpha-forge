@@ -5,12 +5,12 @@
 <h3 align="center">Adversarial, Mutation-Bounded Crypto Alpha Research Loop</h3>
 
 <p align="center">
-  <em>File-native state &bull; Tiered LLM judges &bull; Deterministic guards &bull; Fractional sizing &bull; Engine-level risk management</em>
+  <em>File-native state &bull; Coaching LLM judges &bull; Deterministic guards &bull; Fractional sizing &bull; Engine-level risk management</em>
 </p>
 
 ---
 
-Alpha Forge is an autonomous research system that discovers, validates, and hardens crypto trading strategies through an adversarially-reviewed, mutation-bounded pipeline. Every idea is stress-tested by 7 specialized LLM judges, 5 deterministic guards, and a robustness battery before it can graduate. All state lives in Markdown + YAML files. No database. No black boxes.
+Alpha Forge is an autonomous research system that discovers, validates, and hardens crypto trading strategies through an adversarially-reviewed, mutation-bounded pipeline. Every idea is coached by 7 specialized LLM judges, 5 deterministic guards, and a robustness battery before it can graduate. Judges never reject -- they coach. Families iterate until they succeed or exhaust their iteration budget. All state lives in Markdown + YAML files. No database. No black boxes.
 
 ## TUI Dashboard
 
@@ -30,7 +30,7 @@ Manual quant research suffers from three failure modes:
 2. **Overfitting** - results look great on training data, die on holdout
 3. **No audit trail** - impossible to trace how a strategy evolved
 
-Alpha Forge addresses all three by treating alpha research as a **controlled experiment** with hard boundaries on what can change, adversarial review at every stage, and a complete paper trail in human-readable files.
+Alpha Forge addresses all three by treating alpha research as a **controlled experiment** with hard boundaries on what can change, coaching review at every stage, and a complete paper trail in human-readable files.
 
 ## Architecture
 
@@ -57,22 +57,23 @@ flowchart TD
     B --> C["Seed Judge<br/>accept / reject / narrow / merge"]:::pink
     C --> D["Family Created<br/>(hypothesis + mechanism + mutation budget)"]:::warm
 
-    subgraph LOOP["Iteration Loop"]
+    subgraph LOOP["Iteration Loop (up to N iterations)"]
         direction TD
-        E["Draft Plan"]:::sky --> F["Tier-1 Judges<br/>(plan)"]:::pink
+        E["Draft Plan"]:::sky --> F["Tier-1 Judges<br/>(plan coaching)"]:::pink
         F --> G["Write Code"]:::sky
-        G --> H["Tier-2 Judges<br/>(code)"]:::pink
+        G --> H["Tier-2 Judges<br/>(code coaching)"]:::pink
         H --> I["Deterministic Guards<br/>(5x)"]:::mint
         I --> J["Backtest<br/>(crypto-pegasus)"]:::warm
         J --> K["Robustness Battery<br/>(5 tests)"]:::mint
-        K --> L["Tier-3 Judges<br/>(results)"]:::pink
+        K --> L["Tier-3 Judges<br/>(result coaching)"]:::pink
         L --> M{"Score & Decide"}:::decision
+        M -->|"Choose mode"| N["Researcher decides:<br/>replan / revise code / adjust config"]:::sky
     end
 
     D --> E
-    M -->|"Strike (reject only)"| N["3 strikes?<br/>CANCELLED"]:::danger
+    N -->|"Iterate"| E
+    M -->|"Budget exhausted"| X["BUDGET_EXHAUSTED"]:::danger
     M -->|"Qualified improvement"| O["Holdout"]:::sky
-    M -->|"Revise (no strike)"| E
     J -->|"Runtime error"| G
     O --> P["Paper"]:::warm
     P --> Q["Human Review"]:::mint
@@ -90,9 +91,9 @@ flowchart TD
   <img src="pipeline-illustration.png" alt="Adversarial Judge Pipeline" width="600">
 </p>
 
-## Family Lifecycle — State Machine
+## Family Lifecycle -- State Machine
 
-Every research family moves through a deterministic state machine with 20 states and 32 legal transitions. Invalid transitions are rejected. Strike accumulation can override any transition to `CANCELLED_3_STRIKES`. Plan and code revision loops are **strike-free** — only explicit `reject` verdicts add strikes, allowing unlimited refinement iterations. Backtest runtime errors (assertion failures, code bugs) route back to `CODE_REVISION_REQUIRED` for automatic repair.
+Every research family moves through a deterministic state machine. Invalid transitions are rejected. The only terminal conditions are: qualified promotion through holdout, budget exhaustion (configurable, default 20 iterations), or holdout/paper failure. Judges never reject -- they coach via `revise` verdicts with actionable feedback. Guards route failures back to code revision for automatic repair.
 
 ```mermaid
 stateDiagram-v2
@@ -102,35 +103,31 @@ stateDiagram-v2
     QUEUED --> PLAN_IN_REVIEW : PLAN_SUBMITTED
 
     PLAN_IN_REVIEW --> PLAN_APPROVED : PLAN_APPROVED
-    PLAN_IN_REVIEW --> PLAN_REVISION_REQUIRED : PLAN_REJECTED
-    PLAN_IN_REVIEW --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
+    PLAN_IN_REVIEW --> PLAN_REVISION_REQUIRED : PLAN_REVISION_REQUIRED
 
     PLAN_REVISION_REQUIRED --> PLAN_IN_REVIEW : PLAN_SUBMITTED
 
-    PLAN_APPROVED --> CODING : CODE_SUBMITTED
+    PLAN_APPROVED --> CODE_IN_REVIEW : CODE_SUBMITTED
     CODING --> CODE_IN_REVIEW : CODE_SUBMITTED
 
     CODE_IN_REVIEW --> CODE_APPROVED : CODE_APPROVED
-    CODE_IN_REVIEW --> CODE_REVISION_REQUIRED : CODE_REJECTED
-    CODE_IN_REVIEW --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
+    CODE_IN_REVIEW --> CODE_REVISION_REQUIRED : CODE_REVISION_REQUIRED
 
     CODE_REVISION_REQUIRED --> CODE_IN_REVIEW : CODE_SUBMITTED
 
-    CODE_APPROVED --> GUARDS_RUNNING : GUARDS_PASSED
+    CODE_APPROVED --> BACKTEST_RUNNING : GUARDS_PASSED
+    CODE_APPROVED --> CODE_REVISION_REQUIRED : GUARDS_FAILED
     GUARDS_RUNNING --> BACKTEST_RUNNING : GUARDS_PASSED
-    GUARDS_RUNNING --> QUEUED : GUARDS_FAILED
-    GUARDS_RUNNING --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
+    GUARDS_RUNNING --> CODE_REVISION_REQUIRED : GUARDS_FAILED
 
     BACKTEST_RUNNING --> RESULTS_IN_REVIEW : BACKTEST_COMPLETED
     BACKTEST_RUNNING --> CODE_REVISION_REQUIRED : BACKTEST_FAILED
-    BACKTEST_RUNNING --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
 
     RESULTS_IN_REVIEW --> PROMOTE_TO_HOLDOUT : RESULT_APPROVED
     RESULTS_IN_REVIEW --> ITERATE : ITERATE
-    RESULTS_IN_REVIEW --> ARCHIVED_REJECTED : RESULT_REJECTED
-    RESULTS_IN_REVIEW --> CANCELLED_3_STRIKES : CANCELLED_3_STRIKES
 
-    ITERATE --> QUEUED : PLAN_SUBMITTED
+    ITERATE --> PLAN_IN_REVIEW : PLAN_SUBMITTED
+    ITERATE --> BUDGET_EXHAUSTED : BUDGET_EXHAUSTED
 
     PROMOTE_TO_HOLDOUT --> HOLDOUT_RUNNING : PROMOTE_HOLDOUT
     HOLDOUT_RUNNING --> PROMOTE_TO_PAPER : HOLDOUT_PASSED
@@ -143,29 +140,29 @@ stateDiagram-v2
     HUMAN_REVIEW --> DONE : HUMAN_APPROVED
     HUMAN_REVIEW --> ARCHIVED_REJECTED : HUMAN_REJECTED
 
-    CANCELLED_3_STRIKES --> [*]
+    BUDGET_EXHAUSTED --> [*]
     ARCHIVED_REJECTED --> [*]
     DONE --> [*]
 ```
 
-## Tiered Judge Pipeline
+## Coaching Judge Pipeline
 
-Seven adversarial LLM judges organized in three tiers, running concurrently within each tier via `ThreadPoolExecutor`. Each judge produces structured JSON output:
+Seven LLM judges organized in three tiers, running concurrently within each tier via `ThreadPoolExecutor`. Each judge produces structured JSON output. Judges act as **coaches, not gatekeepers** -- they return `approve`, `approve_with_constraints`, or `revise` with specific, actionable `must_fix` guidance:
 
 ```mermaid
 graph LR
-    subgraph "Tier 1 — Plan Review"
+    subgraph "Tier 1 -- Plan Review"
         LJ1[Leakage Judge]
         OJ1[Overfit Judge]
         RJ1[Realism Judge]
     end
 
-    subgraph "Tier 2 — Code Review"
+    subgraph "Tier 2 -- Code Review"
         LJ2[Leakage Judge]
         CJ[Code Smell Judge]
     end
 
-    subgraph "Tier 3 — Result Review"
+    subgraph "Tier 3 -- Result Review"
         RSJ[Result Judge]
         OJ2[Overfit Judge]
         RJ2[Realism Judge]
@@ -188,9 +185,24 @@ graph LR
 | **Realism Judge** | Fee realism, turnover, liquidity, slippage, latency | `realism_risk`, `cost_risk`, `slippage_risk`, `turnover_risk`, `liquidity_risk`, `latency_risk` |
 | **Code Smell Judge** | Hidden state, complexity creep, edit surface violations, traceability | `code_risk`, `complexity_risk`, `statefulness_risk`, `edit_surface_violation_risk`, `traceability_risk` |
 | **Result Judge** | Concentration, fragility, stability, promotion worthiness | `result_quality`, `stability`, `concentration_risk`, `cost_fragility_risk`, `perturbation_fragility_risk` |
-| **Mutation Judge** | Mechanism preservation, search abuse, budget discipline, fork detection | `mechanism_coherence`, `search_abuse_risk`, `degrees_of_freedom_risk`, `family_preservation_confidence`, `budget_status` |
+| **Mutation Judge** | Mechanism preservation, search abuse, budget discipline | `mechanism_coherence`, `search_abuse_risk`, `degrees_of_freedom_risk`, `family_preservation_confidence`, `budget_status` |
 
-All risk fields use `low` / `medium` / `high` string levels. Verdicts: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`.
+All risk fields use `low` / `medium` / `high` / `critical` levels. Verdicts: `approve`, `approve_with_constraints`, `revise`. Every `revise` must include actionable coaching in `must_fix` (what's wrong, why it matters, what to do instead).
+
+## Iteration Budget & Coaching Model
+
+Alpha Forge uses a **coaching-first, budget-bounded** approach instead of punitive strikes:
+
+- **No strikes, no rejections** -- judges return `approve` or `revise` with specific coaching feedback
+- **Iteration budget** -- each family gets up to 20 iterations (configurable via `max_iterations`). Budget exhaustion is the only "death" condition besides holdout/paper failure
+- **Two-track scoring** -- `best_score` tracks any improvement (unconditional); `best_qualified_score` gates holdout promotion (requires robustness)
+- **Researcher autonomy** -- after each iteration, the researcher LLM chooses the next mode:
+  - `replan` -- fundamentally rethink the approach (full plan + code cycle)
+  - `revise_code` -- the approach is sound, fix specific code issues
+  - `adjust_config` -- only tweak `model_config.py` parameters
+- **Rollback on severe degradation** -- code is rolled back to the last checkpoint only if the score drops below 80% of the best score
+- **Judges evaluate the current work, not family biography** -- no iteration count, no failure history poisoning. Only a windowed score trajectory is shown
+- **Guards are the only hard stops** -- deterministic checks for objective violations (edit surface, data leakage) route back to code revision, never to archival
 
 ## Prompt Flow
 
@@ -217,13 +229,13 @@ flowchart TD
     F --> F2[Overfit Judge]
     F --> F3[Realism Judge]
     F1 --> F4[System: prompt file + User: plan, history, optional code/diff]
-    F2 --> F5[System: prompt file + User: plan, history, iteration_count]
+    F2 --> F5[System: prompt file + User: plan, history]
     F3 --> F6[System: prompt file + User: plan, costs config]
 
     F --> G[Write Code]
     G --> G1[Role client: researcher]
     G --> G2[System: inline JSON file contract]
-    G --> G3[User: family, plan, prior feedback]
+    G --> G3[User: family, plan, prior feedback, iteration mode]
     G --> G4[Revision only: existing research files, allowed files, revise-in-place guidance]
 
     G --> H[Tier-2 Code Review]
@@ -239,8 +251,12 @@ flowchart TD
     J --> J2[Overfit Judge]
     J --> J3[Realism Judge]
     J1 --> J4[System: prompt file + User: metrics, robustness, history, prior_best]
-    J2 --> J5[System: prompt file + User: metrics, history, iteration_count]
+    J2 --> J5[System: prompt file + User: metrics, history]
     J3 --> J6[System: prompt file + User: metrics, costs config]
+
+    J --> K[Researcher Mode Selection]
+    K --> K1[System: inline mode-selection prompt]
+    K --> K2[User: judge feedback, family context, best score]
 ```
 
 | Phase | System Prompt Source | User Context Assembled |
@@ -248,10 +264,11 @@ flowchart TD
 | Seed distillation | Inline in `seed_flow.py` | Raw seed source, raw text, `seed_id` |
 | Seed screening | `judges/prompts/seed_judge.md` | Distilled `SeedCard`, existing family IDs |
 | Draft plan | Inline in `researcher.py` | Family metadata, accepted seed fields, prior feedback, edit/data constraints |
-| Tier-1 plan review | Judge markdown prompt files | Plan, history, iteration count, costs config |
-| Write code | Inline in `researcher.py` | Family metadata, approved plan, prior feedback, and existing code on revision paths |
+| Tier-1 plan review | Judge markdown prompt files | Plan, history, costs config |
+| Write code | Inline in `researcher.py` | Family metadata, approved plan, prior feedback, iteration mode, existing code on revision paths |
 | Tier-2 code review | Judge markdown prompt files | Plan, full code bundle, unified diff, history, changed files, allowed files, forbidden files |
-| Tier-3 result review | Judge markdown prompt files | Metrics, robustness results, history, iteration count, costs config, prior best score |
+| Tier-3 result review | Judge markdown prompt files | Metrics, robustness results, history, costs config, prior best score |
+| Mode selection | Inline in `researcher.py` | Judge feedback, family context, best score |
 
 Code references:
 - `alpha_forge/app/workflow/seed_flow.py`
@@ -262,14 +279,14 @@ Code references:
 
 ## Deterministic Guards
 
-Five hard guards run before every backtest. No LLM — pure code checks:
+Five hard guards run before every backtest. No LLM -- pure code checks. Guard failures route back to `CODE_REVISION_REQUIRED` for automatic repair:
 
-| Guard | What it Checks | Violation Severity |
-|-------|---------------|-------------------|
-| **Edit Surface** | Only `research/*.py` files were modified; forbidden files untouched | **Red strike** |
-| **Time Integrity** | No forward-looking operations (`shift(-N)` with N>0), no future data in features | Strike |
-| **Split Isolation** | Holdout data not accessed before promotion; splits immutable | Strike |
-| **Config Guard** | SHA-256 hashes of `costs.yaml`, `splits.yaml`, `guardrails.yaml` unchanged | Strike |
+| Guard | What it Checks | Severity |
+|-------|---------------|----------|
+| **Edit Surface** | Only `research/*.py` files were modified; forbidden files untouched | Critical |
+| **Time Integrity** | No forward-looking operations (`shift(-N)` with N>0), no future data in features | High |
+| **Split Isolation** | Holdout data not accessed before promotion; splits immutable | High |
+| **Config Guard** | SHA-256 hashes of `costs.yaml`, `splits.yaml`, `guardrails.yaml` unchanged | High |
 | **Reproducibility** | Logs commit hash, config hashes, dataset version for audit trail | Informational |
 
 ## Mutation Budget System
@@ -284,17 +301,6 @@ Each family gets a finite budget for modifications. This prevents unconstrained 
 | `combination` | 1 | Signal combination changes |
 | `regime` | 1 | Regime filter additions |
 | `structural` | 0 | Always requires a **fork** to a child family |
-
-When a mutation exceeds its category budget, the Mutation Judge can recommend `fork_required` to spawn a child family instead.
-
-## Strike Policy
-
-- **3 regular strikes** or **2 red strikes** = family paused for review (`PAUSED_FOR_REVIEW`)
-- **Plan/code revision loops are strike-free** — `revise` verdicts do not add strikes, allowing the researcher to iterate indefinitely until the judges are satisfied or explicitly `reject`
-- Only `reject` verdicts from judges, guard failures, and unqualified results add strikes
-- Strikes reset **only** on qualified improvement (not merely on approval)
-- Red strikes are issued for severe violations (edit surface breaches, data contamination)
-- Strike check overrides any pending transition — evaluated after every strike update
 
 ## Installation
 
@@ -317,7 +323,7 @@ pip install -e .
 # Install crypto-pegasus (backtest engine)
 pip install -e ../crypto-pegasus
 
-# Configure LLM providers — add API keys to .env (git-ignored)
+# Configure LLM providers -- add API keys to .env (git-ignored)
 cp .env.example .env  # then edit with your keys
 # configs/llm.yaml references keys via api_key_env (e.g. BIGMODEL_API_KEY)
 ```
@@ -338,7 +344,6 @@ This creates:
 alpha_research/
 ├── STATE.md              # Global orchestrator state
 ├── IDEAS.md              # Seed ideas index
-├── STRIKES.md            # Global strike ledger
 ├── inbox/                # Raw seeds
 ├── seeds/                # Distilled seed cards
 │   ├── pending/
@@ -375,7 +380,7 @@ This will:
 
 ### 3. Run a Single Iteration
 
-Drive one family through the full pipeline (plan → judge → code → judge → guards → backtest → robustness → judge → score):
+Drive one family through the full pipeline (plan -> judge -> code -> judge -> guards -> backtest -> robustness -> judge -> score):
 
 ```bash
 python scripts/run_iteration.py --family fam_001 --workspace alpha_research --configs configs
@@ -390,7 +395,7 @@ python scripts/run_loop.py \
   --family fam_001 \
   --workspace alpha_research \
   --configs configs \
-  --max-iterations 10 \
+  --max-iterations 20 \
   --verbose
 ```
 
@@ -424,10 +429,10 @@ Each family gets 4 editable Python files in `research/`. These are the **only** 
 **Signal contract**: Values between `-1.0` and `1.0`. Fractional values represent exposure fraction (e.g. `0.5` = 50% long). `0.0` = flat, `NaN` = warmup/no signal.
 
 **MODEL_CONFIG keys**:
-- `"timeframe"` — **required**, must match seed horizon (e.g. `"1h"`)
-- `"stop_loss_pct"` — engine-level stop-loss (e.g. `0.02` = 2%)
-- `"take_profit_pct"` — engine-level take-profit (e.g. `0.05` = 5%)
-- `"trailing_stop_pct"` — engine-level trailing stop (e.g. `0.03` = 3%)
+- `"timeframe"` -- **required**, must match seed horizon (e.g. `"1h"`)
+- `"stop_loss_pct"` -- engine-level stop-loss (e.g. `0.02` = 2%)
+- `"take_profit_pct"` -- engine-level take-profit (e.g. `0.05` = 5%)
+- `"trailing_stop_pct"` -- engine-level trailing stop (e.g. `0.03` = 3%)
 
 Risk management is handled by the crypto-pegasus engine (intra-bar high/low checks, Numba JIT). Strategy code should **not** implement its own stop logic.
 
@@ -457,7 +462,9 @@ total = alpha_quality + stability_bonus
 | `concentration_penalty` | `max(0, (max_return_share - 0.5) * 0.2)` |
 | `fragility_penalty` | `robustness_fail_rate * 0.3` |
 
-**Qualified improvement** requires: score exceeds prior best by `0.05`, robustness tests pass, and no major stability dimension worsens.
+**Two-track scoring**:
+- `best_score` -- tracks any improvement unconditionally. Any score that beats the prior best is saved as a checkpoint.
+- `best_qualified_score` -- gates holdout promotion. Requires score exceeds prior best by `0.05`, core robustness tests pass, and overall robustness pass rate meets threshold.
 
 ## Robustness Battery
 
@@ -504,9 +511,8 @@ max_concentration_share: 0.60
 cost_multiplier_tests: [2.0, 3.0]
 slippage_multiplier_tests: [2.0, 3.0]
 min_robustness_pass_rate: 0.7
-max_strikes: 3
-max_red_strikes: 2
 qualified_improvement_threshold: 0.05
+max_iterations: 20
 ```
 
 ## Project Structure
@@ -527,12 +533,12 @@ alpha-forge/
 │   │   │   ├── judge_router.py
 │   │   │   ├── researcher.py
 │   │   │   └── llm_client.py
-│   │   ├── domain/           # Enums, models, scoring, strikes, mutation policy
+│   │   ├── domain/           # Enums, models, scoring, budget, mutation policy
 │   │   │   ├── states.py
 │   │   │   ├── events.py
 │   │   │   ├── models.py
 │   │   │   ├── scoring.py
-│   │   │   ├── strikes.py
+│   │   │   ├── strikes.py    # Budget exhaustion check (legacy name)
 │   │   │   └── mutation_policy.py
 │   │   ├── guards/           # Deterministic guard checks
 │   │   │   ├── check_edit_surface.py
@@ -556,23 +562,25 @@ alpha-forge/
 │   │   └── holdout_runner.py
 │   └── templates/research/   # Stub templates for new families
 ├── configs/                  # Immutable configuration
-├── judges/prompts/           # Judge prompt templates
+├── judges/prompts/           # Judge prompt templates (coaching-only)
 ├── scripts/                  # CLI entry points
 └── CLAUDE.md                 # AI assistant instructions
 ```
 
 ## Key Design Principles
 
-- **File-native state** — All state in Markdown + YAML + JSON. `git log` is the audit trail.
-- **Deterministic transitions** — A static transition table governs all state changes. No implicit transitions.
-- **Locked edit surface** — Only 4 research files can be modified. Everything else is immutable per-iteration.
-- **Adversarial review** — Every plan, implementation, and result is reviewed by multiple skeptical judges.
-- **Mutation budgets** — Finite budget per mutation category prevents unconstrained parameter search.
-- **Separation of concerns** — The researcher generates, judges evaluate, guards enforce, the orchestrator manages.
-- **Qualified improvement only** — Strikes reset only when the strategy actually gets meaningfully better.
-- **Unlimited revision loops** — Plan and code revisions don't consume strikes, enabling thorough iterative refinement.
-- **Engine-level risk management** — Stop-loss, take-profit, and trailing stops are handled by crypto-pegasus, not strategy code.
-- **Fractional position sizing** — Signals express conviction as continuous values, not binary all-in bets.
+- **File-native state** -- All state in Markdown + YAML + JSON. `git log` is the audit trail.
+- **Deterministic transitions** -- A static transition table governs all state changes. No implicit transitions.
+- **Locked edit surface** -- Only 4 research files can be modified. Everything else is immutable per-iteration.
+- **Coaching review** -- Every plan, implementation, and result is reviewed by multiple judges who coach with actionable feedback, never punitive rejection.
+- **Mutation budgets** -- Finite budget per mutation category prevents unconstrained parameter search.
+- **Separation of concerns** -- The researcher generates, judges coach, guards enforce, the orchestrator manages.
+- **Iteration budget** -- Families get N iterations (default 20) to succeed. No strikes, no premature death. Budget exhaustion is the only iteration-based terminal condition.
+- **Researcher autonomy** -- After each iteration, the researcher chooses the next mode (replan / revise code / adjust config) based on judge feedback.
+- **Two-track scoring** -- Any improvement is tracked and checkpointed; only qualified improvements (robust + significant) gate holdout promotion.
+- **Engine-level risk management** -- Stop-loss, take-profit, and trailing stops are handled by crypto-pegasus, not strategy code.
+- **Fractional position sizing** -- Signals express conviction as continuous values, not binary all-in bets.
+- **Clean history** -- Judges see only a windowed score trajectory, not accumulated failure history. No iteration count poisoning.
 
 ## License
 

@@ -55,10 +55,20 @@ class BaseJudge:
         """Run the judge and return raw parsed JSON."""
         system = self._load_system_prompt()
         user_prompt = self.build_user_prompt(**kwargs)
-        return self.client.call_json(system, user_prompt)
+        raw = self.client.call_json(system, user_prompt)
+        logger.debug("Judge %s raw response: %s", self.judge_type, raw)
+        return raw
 
     def evaluate(self, output_model: type[BaseModel], **kwargs: Any) -> BaseModel:
-        """Run the judge and return a validated Pydantic model."""
-        raw = self.evaluate_raw(**kwargs)
+        """Run the judge and return a validated Pydantic model.
+
+        Uses call_json_validated for multi-turn schema correction: if the LLM
+        returns invalid fields, the validation error is sent back and the LLM
+        must fix its response before we accept it.
+        """
+        system = self._load_system_prompt()
+        user_prompt = self.build_user_prompt(**kwargs)
+        raw = self.client.call_json_validated(system, user_prompt, output_model)
+        logger.debug("Judge %s validated response: %s", self.judge_type, raw)
         raw.setdefault("judge_type", self.judge_type)
         return output_model.model_validate(raw)

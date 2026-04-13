@@ -64,9 +64,9 @@ def make_robustness(tests: list[tuple[str, bool, float]] | None = None) -> Robus
     """Factory for RobustnessResult from list of (name, passed, degradation) tuples."""
     if tests is None:
         tests = [
-            ("cost_2x", True, 0.05),
-            ("cost_3x", True, 0.12),
-            ("slippage_2x", True, 0.03),
+            ("cost_2.0x", True, 0.05),
+            ("cost_3.0x", True, 0.12),
+            ("slippage_2.0x", True, 0.03),
         ]
     return RobustnessResult(
         tests=[

@@ -101,7 +101,7 @@ def test_iterate_starts_new_cycle_and_updates_state_on_guard_failure(
 
     assert iteration.iteration_id == "iter_2"
     assert updated_family.current_iteration == 2
-    assert updated_family.state == FamilyState.QUEUED
+    assert updated_family.state == FamilyState.CODE_REVISION_REQUIRED
     assert global_state["current_iteration"] == 2
 
 
@@ -158,7 +158,7 @@ def test_code_revision_reuses_iteration_and_skips_plan_draft(
     assert iteration.iteration_id == "iter_2"
     assert iteration.plan == "existing plan"
     assert updated_family.current_iteration == 2
-    assert updated_family.state == FamilyState.QUEUED
+    assert updated_family.state == FamilyState.CODE_REVISION_REQUIRED
     assert global_state["current_iteration"] == 2
 
 
@@ -390,6 +390,96 @@ def test_code_review_context_uses_fallback_diff_without_prior_snapshot(
     )
 
     assert context["diff"] == "No prior snapshot available."
+
+
+class TestDetectSimplificationNeeds:
+    """Tests for _detect_simplification_needs reading prior judge outputs."""
+
+    def test_returns_empty_when_no_prior_iteration(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_simp"))
+        flow = FamilyFlow(markdown_store, artifact_store)
+        assert flow._detect_simplification_needs("fam_simp") == []
+
+    def test_extracts_must_fix_from_high_dof_risk(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_simp"))
+        iteration = Iteration(
+            iteration_id="iter_1",
+            family_id="fam_simp",
+            judge_outputs=[
+                JudgeOutput(
+                    judge_type="overfit",
+                    verdict=Verdict.REVISE,
+                    degrees_of_freedom_risk="high",
+                    must_fix=["Remove unused regime filter"],
+                ),
+            ],
+        )
+        markdown_store.write_iteration(iteration)
+        flow = FamilyFlow(markdown_store, artifact_store)
+        result = flow._detect_simplification_needs("fam_simp")
+        assert "Remove unused regime filter" in result
+
+    def test_detects_dead_code_in_reasoning(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_simp"))
+        iteration = Iteration(
+            iteration_id="iter_1",
+            family_id="fam_simp",
+            judge_outputs=[
+                JudgeOutput(
+                    judge_type="overfit",
+                    verdict=Verdict.REVISE,
+                    reasoning_summary="Short side has 0% short exposure, dead code in regime filter",
+                ),
+            ],
+        )
+        markdown_store.write_iteration(iteration)
+        flow = FamilyFlow(markdown_store, artifact_store)
+        result = flow._detect_simplification_needs("fam_simp")
+        assert any("0% activation" in item or "regime" in item.lower() for item in result)
+
+
+class TestGetHistoryContext:
+    """Tests for _get_history_context windowed history."""
+
+    def test_returns_empty_when_no_history(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_hist"))
+        flow = FamilyFlow(markdown_store, artifact_store)
+        assert flow._get_history_context("fam_hist") == []
+
+    def test_returns_full_text_with_few_entries(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_hist"))
+        markdown_store.append_history("fam_hist", "Entry one")
+        markdown_store.append_history("fam_hist", "Entry two")
+        flow = FamilyFlow(markdown_store, artifact_store)
+        result = flow._get_history_context("fam_hist")
+        assert len(result) == 1
+        assert "Entry one" in result[0]
+        assert "Entry two" in result[0]
+
+    def test_returns_summary_plus_recent_with_many_entries(
+        self, markdown_store: MarkdownStore, artifact_store: ArtifactStore,
+    ) -> None:
+        markdown_store.write_family(make_family(family_id="fam_hist"))
+        for i in range(5):
+            markdown_store.append_history("fam_hist", f"Entry {i}")
+        flow = FamilyFlow(markdown_store, artifact_store)
+        result = flow._get_history_context("fam_hist")
+        assert len(result) == 1
+        # Should contain history marker and the last 3 entries
+        assert "HISTORY" in result[0]
+        assert "Entry 4" in result[0]
+        assert "Entry 3" in result[0]
+        assert "Entry 2" in result[0]
 
 
 def test_holdout_artifact_uses_active_iteration_number(

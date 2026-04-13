@@ -22,17 +22,17 @@ class TestAggregateVerdict:
         outputs = [_out(Verdict.APPROVE), _out(Verdict.APPROVE)]
         assert aggregate_verdict(outputs) == Verdict.APPROVE
 
-    def test_any_reject_mixed_with_approve(self):
+    def test_reject_clamped_to_revise(self):
         outputs = [_out(Verdict.APPROVE), _out(Verdict.REJECT)]
-        assert aggregate_verdict(outputs) == Verdict.REJECT
+        assert aggregate_verdict(outputs) == Verdict.REVISE
 
-    def test_fork_required_mixed_with_revise_and_approve(self):
+    def test_fork_required_clamped_to_revise(self):
         outputs = [
             _out(Verdict.FORK_REQUIRED),
-            _out(Verdict.REVISE),
+            _out(Verdict.APPROVE),
             _out(Verdict.APPROVE),
         ]
-        assert aggregate_verdict(outputs) == Verdict.FORK_REQUIRED
+        assert aggregate_verdict(outputs) == Verdict.REVISE
 
     def test_revise_mixed_with_approve(self):
         outputs = [_out(Verdict.REVISE), _out(Verdict.APPROVE)]
@@ -45,9 +45,9 @@ class TestAggregateVerdict:
     def test_empty_list(self):
         assert aggregate_verdict([]) == Verdict.APPROVE
 
-    def test_single_reject(self):
+    def test_single_reject_clamped(self):
         outputs = [_out(Verdict.REJECT)]
-        assert aggregate_verdict(outputs) == Verdict.REJECT
+        assert aggregate_verdict(outputs) == Verdict.REVISE
 
     def test_all_revise(self):
         outputs = [_out(Verdict.REVISE), _out(Verdict.REVISE)]
@@ -60,6 +60,30 @@ class TestAggregateVerdict:
             _out(Verdict.APPROVE),
         ]
         assert aggregate_verdict(outputs) == Verdict.APPROVE_WITH_CONSTRAINTS
+
+
+class TestAggregateVerdictClamping:
+    """Tests that REJECT/FORK_REQUIRED are clamped to REVISE."""
+
+    def test_multiple_rejects_clamped(self):
+        outputs = [_out(Verdict.REJECT), _out(Verdict.REJECT), _out(Verdict.APPROVE)]
+        assert aggregate_verdict(outputs) == Verdict.REVISE
+
+    def test_fork_and_reject_both_clamped(self):
+        outputs = [_out(Verdict.FORK_REQUIRED), _out(Verdict.REJECT), _out(Verdict.APPROVE)]
+        assert aggregate_verdict(outputs) == Verdict.REVISE
+
+    def test_revise_propagates(self):
+        outputs = [_out(Verdict.REVISE), _out(Verdict.APPROVE), _out(Verdict.APPROVE)]
+        assert aggregate_verdict(outputs) == Verdict.REVISE
+
+    def test_approve_with_constraints_propagates(self):
+        outputs = [_out(Verdict.APPROVE_WITH_CONSTRAINTS), _out(Verdict.APPROVE)]
+        assert aggregate_verdict(outputs) == Verdict.APPROVE_WITH_CONSTRAINTS
+
+    def test_all_approve(self):
+        outputs = [_out(Verdict.APPROVE), _out(Verdict.APPROVE), _out(Verdict.APPROVE)]
+        assert aggregate_verdict(outputs) == Verdict.APPROVE
 
 
 def test_base_judge_uses_role_specific_client_mapping(monkeypatch) -> None:

@@ -193,13 +193,87 @@ def create_family(
         "active_family": family_id,
         "state": str(result.new_state),
         "current_iteration": 0,
-        "strike_count": 0,
-        "red_strike_count": 0,
+        "best_score": 0.0,
         "best_qualified_score": 0.0,
         "last_transition_at": datetime.now(tz=timezone.utc).isoformat(),
     })
 
     logger.info("Created family %s from seed %s", family_id, seed_id)
+    return result.family
+
+
+def fork_family(
+    parent_id: str,
+    fork_reason: str,
+    store: MarkdownStore,
+    artifact_store: ArtifactStore,
+    configs_dir: str | Path = "configs",
+) -> IdeaFamily:
+    """Create a child family from a parent with a simplified hypothesis.
+
+    Inherits the parent's mechanism and best code checkpoint, but starts
+    with fresh strikes, budget, and iteration count.
+    """
+    parent = store.read_family(parent_id)
+
+    # Allocate child family_id (next version of same slug)
+    child_id = _next_family_id(store, parent.mechanism)
+
+    child = IdeaFamily(
+        family_id=child_id,
+        parent_family_id=parent_id,
+        fork_reason=fork_reason,
+        seed_id=parent.seed_id,
+        base_hypothesis=parent.base_hypothesis,
+        mechanism=parent.mechanism,
+        allowed_mutations=parent.allowed_mutations.model_copy(),
+        state=FamilyState.NEW,
+    )
+
+    # Write family files
+    store.write_family(child)
+    store.append_history(
+        child_id,
+        f"Forked from {parent_id}. Reason: {fork_reason}",
+    )
+    store.write_mutation_policy(child_id, {
+        "budget": child.mutation_budget.model_dump(),
+        "allowed_mutations": child.allowed_mutations.model_dump(),
+    })
+
+    # Copy best code from parent checkpoint, or current research code
+    checkpoint = artifact_store.load_checkpoint(parent_id)
+    research_dir = store.root / "families" / child_id / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+
+    if checkpoint:
+        for filename, content in checkpoint.items():
+            (research_dir / filename).write_text(content)
+    else:
+        # Fall back to copying parent's current research files
+        parent_research = store.root / "families" / parent_id / "research"
+        if parent_research.exists():
+            for py_file in parent_research.glob("*.py"):
+                dest = research_dir / py_file.name
+                dest.write_text(py_file.read_text())
+        else:
+            _create_research_stubs(store, child_id)
+
+    # Store config hashes for config guard
+    _store_config_hashes(artifact_store, child_id, configs_dir)
+
+    # Transition to QUEUED
+    engine = TransitionEngine()
+    result = engine.apply(child, FamilyEvent.FAMILY_CREATED)
+    store.write_family(result.family)
+
+    # Push to queue so orchestrator picks it up
+    store.push_to_queue(child_id)
+
+    logger.info(
+        "Forked family %s from %s (reason: %s)",
+        child_id, parent_id, fork_reason,
+    )
     return result.family
 
 

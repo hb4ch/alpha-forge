@@ -140,6 +140,19 @@ def run_backtest(
     except Exception:
         pass
 
+    # Read universe override from MODEL_CONFIG (e.g. exclude BNB)
+    if symbols_override is None:
+        try:
+            mc_universe = strategy._config_mod.MODEL_CONFIG.get("universe")
+            if mc_universe and isinstance(mc_universe, list):
+                # Normalize: researcher may write "BTC" instead of "BTCUSDT"
+                canonical = {s.replace("USDT", ""): s for s in symbols}
+                mc_universe = [canonical.get(s.replace("USDT", ""), s) for s in mc_universe]
+                symbols = mc_universe
+                logger.info("Universe override from model_config: %s", symbols)
+        except Exception:
+            pass
+
     engine = BacktestEngine(strategy=strategy, config=config)
     results: list[BacktestResultSummary] = []
 

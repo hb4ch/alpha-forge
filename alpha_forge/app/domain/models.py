@@ -240,6 +240,13 @@ class RobustnessResult(BaseModel):
             return 0.0
         return sum(1 for t in self.tests if t.passed) / len(self.tests)
 
+    @property
+    def core_tests_passed(self) -> bool:
+        """Check that core robustness tests (cost_2x, slippage_2x) pass."""
+        core_names = {"cost_2.0x", "slippage_2.0x"}
+        core = [t for t in self.tests if t.test_name in core_names]
+        return all(t.passed for t in core) if core else True
+
 
 class CompositeScore(BaseModel):
     """Composite quality score for an iteration."""
@@ -288,6 +295,7 @@ class Iteration(BaseModel):
     iteration_id: str
     family_id: str
     stage: IterationStage = IterationStage.DRAFT_PLAN
+    iteration_mode: str = "replan"
     proposal_type: str = "initial"
     mutation_category: MutationCategory | None = None
     plan: str = ""
@@ -298,7 +306,6 @@ class Iteration(BaseModel):
     verdict: Verdict | None = None
     composite_score: CompositeScore | None = None
     qualified_improvement: bool = False
-    strikes_added: list[StrikeRecord] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utc_now)
 
@@ -321,22 +328,24 @@ class AllowedMutations(BaseModel):
 class IdeaFamily(BaseModel):
     """Represents one research family descended from a seed or fork."""
 
+    model_config = {"extra": "ignore"}  # tolerate old strike fields on disk
+
     family_id: str
     parent_family_id: str | None = None
+    fork_reason: str | None = None
     seed_id: str
     base_hypothesis: str
     mechanism: str
     allowed_mutations: AllowedMutations = Field(default_factory=AllowedMutations)
     mutation_budget: MutationBudget = Field(default_factory=MutationBudget)
     state: FamilyState = FamilyState.NEW
-    strike_count: int = 0
-    red_strike_count: int = 0
-    strike_history: list[StrikeRecord] = Field(default_factory=list)
+    best_score: float = 0.0
     best_qualified_score: float = 0.0
+    max_iterations: int = 20
     current_iteration: int = 0
     failure_taxonomy: list[str] = Field(default_factory=list)
-    overfit_flag_history: list[str] = Field(default_factory=list)
     score_history: list[float] = Field(default_factory=list)
+    next_iteration_mode: str = "replan"
     editable_files: list[str] = Field(default_factory=lambda: [
         "research/features.py",
         "research/labels.py",
@@ -351,12 +360,6 @@ class IdeaFamily(BaseModel):
         "reports/*",
     ])
     created_at: datetime = Field(default_factory=_utc_now)
-
-    @model_validator(mode="after")
-    def validate_strikes(self) -> IdeaFamily:
-        if self.red_strike_count > self.strike_count:
-            raise ValueError("red_strike_count cannot exceed strike_count")
-        return self
 
 
 # ---------------------------------------------------------------------------

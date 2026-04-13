@@ -76,6 +76,27 @@ class MarkdownStore:
             "# Global State\n",
         )
 
+    def push_to_queue(self, family_id: str) -> None:
+        """Append a family to the global processing queue."""
+        state = self.read_global_state()
+        queue = state.get("family_queue") or []
+        if family_id not in queue:
+            queue.append(family_id)
+        state["family_queue"] = queue
+        self.write_global_state(state)
+
+    def pop_from_queue(self) -> str | None:
+        """Pop the next family from the processing queue."""
+        state = self.read_global_state()
+        queue = state.get("family_queue") or []
+        if not queue:
+            return None
+        family_id = queue.pop(0)
+        state["family_queue"] = queue
+        state["active_family"] = family_id
+        self.write_global_state(state)
+        return family_id
+
     # ------------------------------------------------------------------
     # Family operations
     # ------------------------------------------------------------------

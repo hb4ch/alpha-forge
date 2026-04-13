@@ -59,3 +59,20 @@ class TestLoadConfigHashesReturnsNone:
     def test_nonexistent_family(self, artifact_store: ArtifactStore) -> None:
         result = artifact_store.load_config_hashes("fam_nonexistent")
         assert result is None
+
+
+class TestCheckpointRoundtrip:
+    def test_save_and_load(self, artifact_store: ArtifactStore) -> None:
+        code = {"features.py": "def f(): pass", "model_config.py": "MC = {}"}
+        artifact_store.save_checkpoint("fam_001", code)
+        loaded = artifact_store.load_checkpoint("fam_001")
+        assert loaded == code
+
+    def test_load_nonexistent_returns_none(self, artifact_store: ArtifactStore) -> None:
+        assert artifact_store.load_checkpoint("fam_999") is None
+
+    def test_overwrite_existing(self, artifact_store: ArtifactStore) -> None:
+        artifact_store.save_checkpoint("fam_001", {"a.py": "v1"})
+        artifact_store.save_checkpoint("fam_001", {"a.py": "v2"})
+        loaded = artifact_store.load_checkpoint("fam_001")
+        assert loaded == {"a.py": "v2"}

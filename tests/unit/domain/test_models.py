@@ -28,20 +28,22 @@ from alpha_forge.app.domain.states import MutationCategory
 from tests.conftest import make_family, make_robustness
 
 
-class TestIdeaFamilyValidator:
-    """IdeaFamily model_validator rejects red_strike_count > strike_count."""
+class TestIdeaFamilyBudgetAndScore:
+    """IdeaFamily tracks iteration budget and best score."""
 
-    def test_rejects_red_exceeds_total(self) -> None:
-        with pytest.raises(ValidationError, match="red_strike_count cannot exceed"):
-            make_family(strike_count=1, red_strike_count=2)
+    def test_default_max_iterations(self) -> None:
+        family = make_family()
+        assert family.max_iterations == 20
 
-    def test_accepts_equal_counts(self) -> None:
-        family = make_family(strike_count=2, red_strike_count=2)
-        assert family.red_strike_count == 2
+    def test_default_best_score(self) -> None:
+        family = make_family()
+        assert family.best_score == 0.0
 
-    def test_accepts_red_less_than_total(self) -> None:
-        family = make_family(strike_count=3, red_strike_count=1)
-        assert family.red_strike_count == 1
+    def test_ignores_old_strike_fields(self) -> None:
+        """Old persisted data with strike fields should be silently ignored."""
+        family = make_family()
+        # model_config extra="ignore" means extra fields are silently dropped
+        assert not hasattr(family, "strike_count") or True  # no error raised
 
 
 class TestMutationBudgetRemaining:

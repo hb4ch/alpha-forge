@@ -14,7 +14,7 @@ from alpha_forge.app.agents.llm_client import LLMClient
 from alpha_forge.app.domain.states import FamilyState
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore
-from alpha_forge.app.workflow.family_flow import FamilyFlow
+from alpha_forge.app.workflow.family_flow import BudgetExhaustedError, FamilyFlow
 from alpha_forge.engine.holdout_runner import run_holdout
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ ACTIONABLE_STATES = {
 WAITING_STATES = {
     FamilyState.HUMAN_REVIEW,
     FamilyState.PAPER_FORWARD_RUNNING,
-    FamilyState.PAUSED_FOR_REVIEW,
     FamilyState.ARCHIVED_REJECTED,
+    FamilyState.BUDGET_EXHAUSTED,
     FamilyState.DONE,
 }
 
@@ -84,7 +84,10 @@ class Orchestrator:
             global_state = self.store.read_global_state()
             family_id = global_state.get("active_family")
             if not family_id:
-                logger.info("No active family found in STATE.md")
+                # Try the queue
+                family_id = self.store.pop_from_queue()
+            if not family_id:
+                logger.info("No active family and queue is empty")
                 return {"status": "no_active_family"}
 
         family = self.store.read_family(family_id)
@@ -151,7 +154,12 @@ class Orchestrator:
                                 FamilyState.PLAN_REVISION_REQUIRED,
                                 FamilyState.CODE_REVISION_REQUIRED):
                 logger.info("Running iteration %d for family %s", iterations_run + 1, family_id)
-                iteration = self.flow.run_iteration(family_id)
+                try:
+                    iteration = self.flow.run_iteration(family_id)
+                except BudgetExhaustedError as e:
+                    logger.info("Family %s: %s", family_id, e)
+                    results.append({"step": "budget_exhausted", "best_score": e.best_score})
+                    break
                 results.append({
                     "step": "iteration",
                     "iteration_id": iteration.iteration_id,
@@ -167,14 +175,24 @@ class Orchestrator:
             break
 
         family = self.store.read_family(family_id)
-        return {
+        result = {
             "family_id": family_id,
             "final_state": str(family.state),
             "iterations_run": iterations_run,
-            "best_score": family.best_qualified_score,
-            "strike_count": family.strike_count,
+            "best_score": family.best_score,
+            "best_qualified_score": family.best_qualified_score,
             "results": results,
         }
+
+        # If this family finished, try the next one from the queue
+        if family.state.is_terminal or family.state in WAITING_STATES:
+            next_id = self.store.pop_from_queue()
+            if next_id:
+                logger.info("Advancing to next family in queue: %s", next_id)
+                next_result = self.run(next_id)
+                result["next_family"] = next_result
+
+        return result
 
     def _run_holdout(self, family_id: str) -> dict[str, Any]:
         """Run holdout evaluation and handle the transition."""

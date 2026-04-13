@@ -43,7 +43,6 @@ def test_legal_transition_produces_correct_next_state(
     assert result.new_state == expected_next
     assert result.previous_state == current_state
     assert result.family.state == expected_next
-    assert result.paused_for_review is False
 
 
 # ---------------------------------------------------------------------------
@@ -62,107 +61,7 @@ def test_illegal_transition_raises(engine: TransitionEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Strike context adds a strike and records in side_effects
-# ---------------------------------------------------------------------------
-
-
-def test_strike_context_adds_strike(engine: TransitionEngine) -> None:
-    """Passing strike_reason in context must add a strike to the family."""
-    family = make_family(state=FamilyState.PLAN_IN_REVIEW)
-    ctx = {"strike_reason": "test", "iteration_id": "iter_1"}
-
-    result = engine.apply(family, FamilyEvent.PLAN_REJECTED, context=ctx)
-
-    assert result.family.strike_count == 1
-    assert result.strike_added is not None
-    assert result.strike_added.reason == "test"
-    assert result.strike_added.iteration_id == "iter_1"
-    assert result.strike_added.is_red is False
-
-    strike_effects = [se for se in result.side_effects if se.type == "strike_added"]
-    assert len(strike_effects) == 1
-    assert strike_effects[0].data["reason"] == "test"
-    assert strike_effects[0].data["is_red"] is False
-
-
-# ---------------------------------------------------------------------------
-# 4. Red strike context increments red_strike_count
-# ---------------------------------------------------------------------------
-
-
-def test_red_strike_context_increments_red_count(engine: TransitionEngine) -> None:
-    """is_red_strike=True must increment red_strike_count."""
-    family = make_family(state=FamilyState.CODE_IN_REVIEW)
-    ctx = {
-        "strike_reason": "bad",
-        "is_red_strike": True,
-        "iteration_id": "iter_1",
-    }
-
-    result = engine.apply(family, FamilyEvent.CODE_REJECTED, context=ctx)
-
-    assert result.family.red_strike_count == 1
-    assert result.family.strike_count == 1
-    assert result.strike_added is not None
-    assert result.strike_added.is_red is True
-
-    strike_effects = [se for se in result.side_effects if se.type == "strike_added"]
-    assert len(strike_effects) == 1
-    assert strike_effects[0].data["is_red"] is True
-
-
-# ---------------------------------------------------------------------------
-# 5. Pause for review at 3 strikes
-# ---------------------------------------------------------------------------
-
-
-def test_pause_at_three_strikes(engine: TransitionEngine) -> None:
-    """Third strike must override normal transition with pause for review."""
-    family = make_family(state=FamilyState.PLAN_IN_REVIEW, strike_count=2)
-    ctx = {"strike_reason": "third strike", "iteration_id": "iter_3"}
-
-    result = engine.apply(family, FamilyEvent.PLAN_REJECTED, context=ctx)
-
-    assert result.paused_for_review is True
-    assert result.new_state == FamilyState.PAUSED_FOR_REVIEW
-    assert result.family.state == FamilyState.PAUSED_FOR_REVIEW
-    assert result.family.strike_count == 3
-    assert result.strike_added is not None
-
-    pause_effects = [se for se in result.side_effects if se.type == "family_paused_for_review"]
-    assert len(pause_effects) == 1
-    assert pause_effects[0].data["strike_count"] == 3
-
-
-# ---------------------------------------------------------------------------
-# 6. Pause for review at 2 red strikes
-# ---------------------------------------------------------------------------
-
-
-def test_pause_at_two_red_strikes(engine: TransitionEngine) -> None:
-    """Second red strike must trigger pause for review regardless of total count."""
-    family = make_family(
-        state=FamilyState.CODE_IN_REVIEW,
-        strike_count=1,
-        red_strike_count=1,
-    )
-    ctx = {
-        "strike_reason": "second red",
-        "is_red_strike": True,
-        "iteration_id": "iter_2",
-    }
-
-    result = engine.apply(family, FamilyEvent.CODE_REJECTED, context=ctx)
-
-    assert result.paused_for_review is True
-    assert result.new_state == FamilyState.PAUSED_FOR_REVIEW
-    assert result.family.red_strike_count == 2
-    assert result.strike_added is not None
-    assert result.strike_added.is_red is True
-
-
-# ---------------------------------------------------------------------------
-# 7. ITERATE event does not mutate current_iteration
+# 3. ITERATE event does not mutate current_iteration
 # ---------------------------------------------------------------------------
 
 
@@ -177,7 +76,7 @@ def test_iterate_does_not_increment_current_iteration(engine: TransitionEngine) 
 
 
 # ---------------------------------------------------------------------------
-# 8. Score context updates best_qualified_score when higher
+# 4. Score context updates best_qualified_score when higher
 # ---------------------------------------------------------------------------
 
 
@@ -195,7 +94,7 @@ def test_score_updates_when_higher(engine: TransitionEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. Score does NOT update when lower
+# 5. Score does NOT update when lower
 # ---------------------------------------------------------------------------
 
 
@@ -213,12 +112,12 @@ def test_score_does_not_update_when_lower(engine: TransitionEngine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 10. Side effects always contain state_transition for legal, non-paused
+# 6. Side effects always contain state_transition for legal transitions
 # ---------------------------------------------------------------------------
 
 
 def test_side_effects_contain_state_transition(engine: TransitionEngine) -> None:
-    """Every legal non-paused transition must emit a state_transition side effect."""
+    """Every legal transition must emit a state_transition side effect."""
     family = make_family(state=FamilyState.QUEUED)
 
     result = engine.apply(family, FamilyEvent.PLAN_SUBMITTED)
@@ -247,3 +146,43 @@ def test_all_legal_transitions_have_state_transition_side_effect(
 
     transition_effects = [se for se in result.side_effects if se.type == "state_transition"]
     assert len(transition_effects) >= 1
+
+
+# ---------------------------------------------------------------------------
+# 7. Guard failure routes to CODE_REVISION_REQUIRED
+# ---------------------------------------------------------------------------
+
+
+def test_guard_failure_routes_to_code_revision(engine: TransitionEngine) -> None:
+    """Guard failures should route to CODE_REVISION_REQUIRED, not archive."""
+    family = make_family(state=FamilyState.CODE_APPROVED)
+    result = engine.apply(family, FamilyEvent.GUARDS_FAILED)
+    assert result.new_state == FamilyState.CODE_REVISION_REQUIRED
+
+
+# ---------------------------------------------------------------------------
+# 8. Budget exhaustion from ITERATE state
+# ---------------------------------------------------------------------------
+
+
+def test_budget_exhaustion_from_iterate(engine: TransitionEngine) -> None:
+    """BUDGET_EXHAUSTED event should transition to terminal BUDGET_EXHAUSTED state."""
+    family = make_family(state=FamilyState.ITERATE)
+    result = engine.apply(family, FamilyEvent.BUDGET_EXHAUSTED)
+    assert result.new_state == FamilyState.BUDGET_EXHAUSTED
+    assert result.family.state.is_terminal
+
+
+# ---------------------------------------------------------------------------
+# 9. Plan revision required routes back to plan submission
+# ---------------------------------------------------------------------------
+
+
+def test_plan_revision_routes_to_plan_review(engine: TransitionEngine) -> None:
+    """PLAN_REVISION_REQUIRED should accept PLAN_SUBMITTED to re-enter review."""
+    family = make_family(state=FamilyState.PLAN_IN_REVIEW)
+    result = engine.apply(family, FamilyEvent.PLAN_REVISION_REQUIRED)
+    assert result.new_state == FamilyState.PLAN_REVISION_REQUIRED
+
+    result2 = engine.apply(result.family, FamilyEvent.PLAN_SUBMITTED)
+    assert result2.new_state == FamilyState.PLAN_IN_REVIEW

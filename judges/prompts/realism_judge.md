@@ -125,8 +125,8 @@ Required schema:
 
 Allowed values:
 
-- `verdict`: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`
-- risk fields: `low`, `medium`, `high`
+- `verdict`: `approve`, `approve_with_constraints`, `revise`
+- risk fields: `low`, `medium`, `high`, `critical`
 
 Rules:
 
@@ -165,8 +165,21 @@ Rules:
 ### Revise when
 - execution assumptions are too optimistic but the family may still be salvageable.
 
-### Reject when
-- the edge depends on obviously unrealistic fills or friction assumptions.
+### Revise when
+- execution assumptions are too optimistic but specific changes could make them realistic.
+- the edge depends on unrealistic fills or friction — coach the researcher on what to change.
+
+---
+
+## Coaching mandate
+
+When issuing `revise`, you MUST provide specific, actionable coaching in `must_fix`. Explain:
+1. **What** assumption is unrealistic (e.g. "assumes zero slippage on 1-minute bars")
+2. **Why** it matters (e.g. "at this turnover rate, even 1 bps of slippage erases the edge")
+3. **What to do instead** (e.g. "widen the holding period to reduce turnover, or add a signal strength threshold to filter weak trades")
+
+Bad: "Costs are unrealistic."
+Good: "Turnover of 800 trades/year at 3 bps edge per trade means fees consume ~60% of gross alpha. Reduce turnover by widening the holding period (e.g. 4h→8h) or add a conviction filter so only strong signals trade."
 
 ---
 

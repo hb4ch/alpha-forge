@@ -1,12 +1,13 @@
 """Family lifecycle flow: drives one iteration of a family through the full pipeline.
 
-Plan → Judge → Code → Judge → Guards → Backtest → Robustness → Judge → Score → Strike update
+Plan → Judge → Code → Judge → Guards → Backtest → Robustness → Judge → Score → Decide
 """
 
 from __future__ import annotations
 
 import difflib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +20,15 @@ from alpha_forge.app.domain.models import (
     Iteration,
     SeedCard,
 )
-from alpha_forge.app.domain.scoring import compute_composite_score, is_qualified_improvement
+from alpha_forge.app.domain.scoring import (
+    ROLLBACK_DEGRADATION_THRESHOLD,
+    compute_composite_score,
+    is_qualified_improvement,
+    is_score_improvement,
+)
 from alpha_forge.app.domain.states import FamilyState, IterationStage, Verdict
-from alpha_forge.app.domain.strikes import reset_strikes
-from alpha_forge.app.guards.runner import any_failed, has_red_strike, run_all_guards
+from alpha_forge.app.domain.strikes import is_budget_exhausted
+from alpha_forge.app.guards.runner import any_failed, run_all_guards
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore
 from alpha_forge.app.workflow.transitions import TransitionEngine
@@ -41,6 +47,19 @@ PLAN_ENTRY_STATES = {
     FamilyState.ITERATE,
     FamilyState.PLAN_REVISION_REQUIRED,
 }
+
+class BudgetExhaustedError(Exception):
+    """Raised when a family has exhausted its iteration budget."""
+
+    def __init__(self, family_id: str, max_iterations: int, best_score: float) -> None:
+        self.family_id = family_id
+        self.max_iterations = max_iterations
+        self.best_score = best_score
+        super().__init__(
+            f"Family {family_id} exhausted iteration budget "
+            f"({max_iterations} iterations, best score: {best_score:.3f})"
+        )
+
 
 ALLOWED_RESEARCH_FILES = [
     "features.py",
@@ -179,6 +198,32 @@ class FamilyFlow:
                 feedback.append("\n".join(parts))
         return feedback
 
+    def _detect_simplification_needs(self, family_id: str) -> list[str]:
+        """Scan prior judge outputs for dead-complexity flags.
+
+        Returns a list of human-readable simplification directives.
+        """
+        items: list[str] = []
+        try:
+            prev_iter = self.store.read_iteration(family_id)
+            if not prev_iter or not prev_iter.judge_outputs:
+                return items
+            for output in prev_iter.judge_outputs:
+                dof_risk = getattr(output, "degrees_of_freedom_risk", "")
+                if dof_risk in ("high", "critical"):
+                    for fix in getattr(output, "must_fix", []) or []:
+                        items.append(fix)
+                reasoning = getattr(output, "reasoning_summary", "") or ""
+                lower = reasoning.lower()
+                if "0% short exposure" in lower or "dead code" in lower or "dead complexity" in lower:
+                    items.append("Strip regime/short complexity that produces 0% activation")
+                if "never activates" in lower or "mechanism is dead" in lower:
+                    items.append("Remove mechanism components that never activate in backtests")
+        except Exception:
+            pass
+        # Deduplicate
+        return list(dict.fromkeys(items))
+
     def _build_plan_context(
         self,
         family: IdeaFamily,
@@ -232,23 +277,59 @@ class FamilyFlow:
         prior_feedback: list[str] | None,
         iter_num: int,
         family: IdeaFamily,
+        code_changed: bool = True,
     ) -> dict[str, Any]:
         """Assemble tier-3 review context."""
-        return {
+        ctx = {
             "metrics": {r.symbol: r.all_metrics for r in bt_results},
             "robustness": robustness.model_dump(),
             "history": prior_feedback,
-            "iteration_count": iter_num,
             "config": self._load_costs_config(),
-            "prior_best": family.best_qualified_score,
+            "prior_best": family.best_score,
         }
+        if not code_changed:
+            ctx["code_changed"] = False
+            ctx["code_change_note"] = (
+                "Code was unchanged from the prior iteration. "
+                "Identical results are expected and should NOT be "
+                "treated as evidence of stagnation or overfit."
+            )
+        return ctx
 
     def _get_history_context(self, family_id: str) -> list[str]:
-        """Get prior iteration history for judge context."""
+        """Get recent iteration history (last 3) plus a score trajectory summary.
+
+        Prevents judge poisoning from accumulated failure history by
+        windowing: only the most recent 3 iteration entries are shown
+        in full; older entries are reduced to a score trajectory line.
+        """
         history_path = self.store.root / "families" / family_id / "HISTORY.md"
         if not history_path.exists():
             return []
-        return [history_path.read_text()]
+
+        full_text = history_path.read_text()
+        # Each iteration entry starts with ## [timestamp]
+        sections = re.split(r'(?=^## \[)', full_text, flags=re.MULTILINE)
+        entries = sections[1:] if len(sections) > 1 else []
+
+        if len(entries) <= 3:
+            return [full_text]  # Short history, show all
+
+        # Extract score trajectory from older entries
+        older = entries[:-3]
+        recent = entries[-3:]
+
+        scores: list[str] = []
+        for entry in older:
+            score_match = re.search(r'Score:\s*([\d.]+)', entry)
+            if score_match:
+                scores.append(score_match.group(1))
+        score_trajectory = " → ".join(scores) if scores else "no scores"
+        summary = (
+            f"[HISTORY: {len(older)} prior iterations, scores: {score_trajectory}]\n\n"
+        )
+
+        return [summary + "".join(recent)]
 
     def _append_history(self, family_id: str, entry: str) -> None:
         """Append a free-form entry to the family's HISTORY.md."""
@@ -289,6 +370,21 @@ class FamilyFlow:
     def _prepare_iteration(self, family: IdeaFamily) -> tuple[IdeaFamily, Iteration, bool, bool]:
         """Prepare the iteration object and family state for the current entry path."""
         existing = self.store.read_iteration(family.family_id)
+
+        # Budget check — archive if exhausted
+        if family.state in NEW_ITERATION_STATES and is_budget_exhausted(family):
+            logger.info(
+                "Family %s exhausted iteration budget (%d/%d). Best score: %.3f",
+                family.family_id, family.current_iteration, family.max_iterations, family.best_score,
+            )
+            self._append_history(
+                family.family_id,
+                f"Iteration budget ({family.max_iterations}) exhausted. Best score: {family.best_score:.3f}",
+            )
+            family = family.model_copy(update={"state": FamilyState.BUDGET_EXHAUSTED})
+            self.store.write_family(family)
+            self._update_global_state(family)
+            raise BudgetExhaustedError(family.family_id, family.max_iterations, family.best_score)
 
         if family.state in NEW_ITERATION_STATES:
             family = family.model_copy(update={"current_iteration": family.current_iteration + 1})
@@ -376,7 +472,7 @@ class FamilyFlow:
             if not started_new_cycle:
                 # This is a revision — load previous iteration's judge outputs
                 try:
-                    prev_iter = self.store.read_current_iteration(family_id)
+                    prev_iter = self.store.read_iteration(family_id)
                     if prev_iter and prev_iter.judge_outputs:
                         judge_fb = self._extract_judge_feedback(prev_iter.judge_outputs)
                         if judge_fb:
@@ -385,6 +481,15 @@ class FamilyFlow:
                             )
                 except Exception:
                     pass
+            # Detect dead complexity from prior judge outputs → simplification directive
+            simplify_items = self._detect_simplification_needs(family_id)
+            if simplify_items:
+                plan_feedback.append(
+                    "## SIMPLIFICATION REQUIRED\n"
+                    "Judges have flagged the following dead or unnecessary complexity. "
+                    "Your plan MUST remove it entirely (not tune it):\n"
+                    + "\n".join(f"- {item}" for item in simplify_items)
+                )
             plan_context = self._build_plan_context(family, seed, plan_feedback)
             plan = self.researcher.draft_plan(
                 plan_context["family"],
@@ -405,10 +510,11 @@ class FamilyFlow:
             self._emit("stage_changed", {"stage": "PLAN_JUDGED", "family_id": family_id, "iteration": iter_id, "detail": "Awaiting tier-1 judges..."})
             self._emit("llm_start", {"role": "Judges", "task": "Tier-1 plan review (Leakage, Overfit, Realism)"})
             logger.info("[%s] Running tier-1 judges (plan review)...", iter_id)
+            # Tier-1 gets a lean trajectory summary, not full history
+            tier1_history = [f"Best score so far: {family.best_score:.3f}"]
             tier1_outputs = run_tier(1, {
                 "plan": plan,
-                "history": prior_feedback,
-                "iteration_count": iter_num,
+                "history": tier1_history,
                 "config": self._load_costs_config(),
             })
             iteration = iteration.model_copy(update={
@@ -423,20 +529,9 @@ class FamilyFlow:
                 "tier": 1, "verdict": str(tier1_verdict), "outputs": [o.model_dump() for o in tier1_outputs],
                 "family_id": family_id, "iteration": iter_id,
             })
-            if tier1_verdict == Verdict.REJECT:
-                logger.warning("[%s] Plan rejected by tier-1 judges", iter_id)
-                family = self._transition_family(family, FamilyEvent.PLAN_REJECTED, context={
-                    "strike_reason": "Plan rejected",
-                    "iteration_id": iter_id,
-                })
-                iteration = iteration.model_copy(update={
-                    "stage": IterationStage.ITERATION_FAILED,
-                    "verdict": tier1_verdict,
-                })
-                return self._finalize_iteration(family_id, iteration, family)
-            elif tier1_verdict == Verdict.REVISE:
-                logger.info("[%s] Plan revision requested by tier-1 judges (no strike)", iter_id)
-                family = self._transition_family(family, FamilyEvent.PLAN_REJECTED)
+            if tier1_verdict == Verdict.REVISE:
+                logger.info("[%s] Plan revision requested by tier-1 judges", iter_id)
+                family = self._transition_family(family, FamilyEvent.PLAN_REVISION_REQUIRED)
                 iteration = iteration.model_copy(update={
                     "stage": IterationStage.ITERATION_FAILED,
                     "verdict": tier1_verdict,
@@ -510,20 +605,9 @@ class FamilyFlow:
             "tier": 2, "verdict": str(tier2_verdict), "outputs": [o.model_dump() for o in tier2_outputs],
             "family_id": family_id, "iteration": iter_id,
         })
-        if tier2_verdict == Verdict.REJECT:
-            logger.warning("[%s] Code rejected by tier-2 judges", iter_id)
-            family = self._transition_family(family, FamilyEvent.CODE_REJECTED, context={
-                "strike_reason": "Code rejected by tier-2 judges",
-                "iteration_id": iter_id,
-            })
-            iteration = iteration.model_copy(update={
-                "stage": IterationStage.ITERATION_FAILED,
-                "verdict": tier2_verdict,
-            })
-            return self._finalize_iteration(family_id, iteration, family)
-        elif tier2_verdict == Verdict.REVISE:
-            logger.info("[%s] Code revision requested by tier-2 judges (no strike)", iter_id)
-            family = self._transition_family(family, FamilyEvent.CODE_REJECTED)
+        if tier2_verdict == Verdict.REVISE:
+            logger.info("[%s] Code revision requested by tier-2 judges", iter_id)
+            family = self._transition_family(family, FamilyEvent.CODE_REVISION_REQUIRED)
             iteration = iteration.model_copy(update={
                 "stage": IterationStage.ITERATION_FAILED,
                 "verdict": tier2_verdict,
@@ -547,14 +631,13 @@ class FamilyFlow:
             "results": [g.model_dump() for g in guard_results],
         })
         if any_failed(guard_results):
-            is_red = has_red_strike(guard_results)
             violations = [v for g in guard_results for v in g.violations]
             logger.warning("[%s] Guards failed: %s", iter_id, violations)
-            family = self._transition_family(family, FamilyEvent.GUARDS_FAILED, context={
-                "strike_reason": f"Guard failures: {', '.join(violations[:3])}",
-                "iteration_id": iter_id,
-                "is_red_strike": is_red,
-            })
+            self._append_history(
+                family_id,
+                f"Iteration {iter_id}: GUARD FAILURE\n  {', '.join(violations[:5])}",
+            )
+            family = self._transition_family(family, FamilyEvent.GUARDS_FAILED)
             iteration = iteration.model_copy(update={"stage": IterationStage.ITERATION_FAILED})
             return self._finalize_iteration(family_id, iteration, family)
 
@@ -626,12 +709,16 @@ class FamilyFlow:
         logger.info("[%s] Running tier-3 judges (result review)...", iter_id)
         self._emit("stage_changed", {"stage": "RESULT_JUDGED", "family_id": family_id, "iteration": iter_id, "detail": "Awaiting tier-3 judges..."})
         self._emit("llm_start", {"role": "Judges", "task": "Tier-3 result review (Performance, Risk)"})
+        # Determine if code actually changed this iteration
+        current_code = self._read_research_code_dict(family_id)
+        code_changed = old_code != current_code if old_code else True
         result_review_context = self._build_result_review_context(
             bt_results,
             robustness,
             prior_feedback,
             iter_num,
             family,
+            code_changed=code_changed,
         )
         tier3_outputs = run_tier(3, result_review_context)
         self._emit("llm_end", {"role": "Judges"})
@@ -657,16 +744,18 @@ class FamilyFlow:
         qualified = is_qualified_improvement(score, family.best_qualified_score, robustness)
         iteration = iteration.model_copy(update={"qualified_improvement": qualified})
 
-        if tier3_verdict in (Verdict.REJECT,):
-            logger.info("[%s] Results rejected", iter_id)
-            family = self._transition_family(family, FamilyEvent.RESULT_REJECTED, context={
-                "strike_reason": "Results rejected by tier-3 judges",
-                "iteration_id": iter_id,
-            })
-            iteration = iteration.model_copy(update={"stage": IterationStage.ITERATION_FAILED})
-        elif tier3_verdict in (Verdict.APPROVE, Verdict.APPROVE_WITH_CONSTRAINTS) and qualified:
-            logger.info("[%s] Qualified improvement! Score: %.3f", iter_id, score.total)
-            family = reset_strikes(family)
+        # Track raw best score (any improvement, unconditional)
+        if is_score_improvement(score, family.best_score):
+            logger.info("[%s] New best score: %.3f (was %.3f)", iter_id, score.total, family.best_score)
+            family = family.model_copy(update={"best_score": score.total})
+            # Save known-good code as checkpoint
+            good_code = self._read_research_code_dict(family_id)
+            if good_code:
+                self.artifact_store.save_checkpoint(family_id, good_code)
+
+        # Decide next action based on tier-3 verdict and score quality
+        if tier3_verdict in (Verdict.APPROVE, Verdict.APPROVE_WITH_CONSTRAINTS) and qualified:
+            logger.info("[%s] Qualified improvement! Score: %.3f → holdout promotion", iter_id, score.total)
             family = self._transition_family(family, FamilyEvent.RESULT_APPROVED, context={
                 "score": score.total,
             })
@@ -674,13 +763,37 @@ class FamilyFlow:
                 "stage": IterationStage.ITERATION_SUCCESS,
             })
         else:
-            logger.info("[%s] No qualified improvement, iterating. Score: %.3f", iter_id, score.total)
-            family = self._transition_family(family, FamilyEvent.ITERATE, context={
-                "strike_reason": "No qualified improvement" if not qualified else None,
-                "iteration_id": iter_id,
-            })
+            # Not yet promotable — iterate with coaching feedback
+            if tier3_verdict == Verdict.REVISE:
+                logger.info("[%s] Tier-3 revision requested. Score: %.3f, iterating with coaching", iter_id, score.total)
+            else:
+                logger.info("[%s] No qualified improvement. Score: %.3f, iterating", iter_id, score.total)
+
+            # Rollback to checkpoint only on severe degradation
+            if code_changed and family.best_score > 0:
+                if score.total < family.best_score * ROLLBACK_DEGRADATION_THRESHOLD:
+                    checkpoint = self.artifact_store.load_checkpoint(family_id)
+                    if checkpoint:
+                        research_dir = self.store.root / "families" / family_id / "research"
+                        for fname, content in checkpoint.items():
+                            (research_dir / fname).write_text(content)
+                        logger.info("[%s] Severe degradation — rolled back code to checkpoint", iter_id)
+
+            # Ask researcher to choose iteration mode for next cycle
+            judge_fb = self._extract_judge_feedback(tier3_outputs)
+            try:
+                mode_decision = self.researcher.choose_iteration_mode(judge_fb, family)
+                next_mode = mode_decision.get("mode", "replan")
+                logger.info("[%s] Researcher chose iteration mode: %s (%s)", iter_id, next_mode, mode_decision.get("reasoning", ""))
+            except Exception as e:
+                logger.warning("[%s] Failed to get iteration mode, defaulting to replan: %s", iter_id, e)
+                next_mode = "replan"
+            family = family.model_copy(update={"next_iteration_mode": next_mode})
+
+            family = self._transition_family(family, FamilyEvent.ITERATE)
             iteration = iteration.model_copy(update={
-                "stage": IterationStage.ITERATION_FAILED if not qualified else IterationStage.ITERATION_SUCCESS,
+                "stage": IterationStage.ITERATION_FAILED,
+                "iteration_mode": next_mode,
             })
 
         return self._finalize_iteration(family_id, iteration, family, score=score.total if score else 0.0)
@@ -706,8 +819,7 @@ class FamilyFlow:
             "verdict": str(iteration.verdict) if iteration.verdict else "none",
             "qualified_improvement": iteration.qualified_improvement,
             "composite_score": iteration.composite_score.total if iteration.composite_score else 0.0,
-            "strike_count": family.strike_count,
-            "red_strike_count": family.red_strike_count,
+            "best_score": family.best_score,
             "family_state": str(family.state),
         }
         self.store.write_ledger_entry(family_id, iter_id, entry)
@@ -717,8 +829,7 @@ class FamilyFlow:
         """Build a rich history entry including judge feedback."""
         lines = [
             f"Iteration {iteration.iteration_id}: stage={iteration.stage}, "
-            f"verdict={iteration.verdict}, qualified={iteration.qualified_improvement}, "
-            f"strikes={family.strike_count}",
+            f"verdict={iteration.verdict}, qualified={iteration.qualified_improvement}",
         ]
 
         if iteration.composite_score:
@@ -752,8 +863,7 @@ class FamilyFlow:
             "active_family": family.family_id,
             "state": str(family.state),
             "current_iteration": family.current_iteration,
-            "strike_count": family.strike_count,
-            "red_strike_count": family.red_strike_count,
+            "best_score": family.best_score,
             "best_qualified_score": family.best_qualified_score,
             "last_transition_at": datetime.now(tz=timezone.utc).isoformat(),
         })

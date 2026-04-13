@@ -26,12 +26,14 @@ class FamilyState(StrEnum):
     HUMAN_REVIEW = "HUMAN_REVIEW"
     PAUSED_FOR_REVIEW = "PAUSED_FOR_REVIEW"
     ARCHIVED_REJECTED = "ARCHIVED_REJECTED"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     DONE = "DONE"
 
     @property
     def is_terminal(self) -> bool:
         return self in {
             FamilyState.ARCHIVED_REJECTED,
+            FamilyState.BUDGET_EXHAUSTED,
             FamilyState.DONE,
         }
 
@@ -46,6 +48,8 @@ class IterationStage(StrEnum):
     RUN_GUARDS = "RUN_GUARDS"
     RUN_BACKTEST = "RUN_BACKTEST"
     RUN_ROBUSTNESS = "RUN_ROBUSTNESS"
+    BACKTEST_FAILED = "BACKTEST_FAILED"
+    ROBUSTNESS_FAILED = "ROBUSTNESS_FAILED"
     RESULT_JUDGED = "RESULT_JUDGED"
     ITERATION_SUCCESS = "ITERATION_SUCCESS"
     ITERATION_FAILED = "ITERATION_FAILED"
@@ -68,8 +72,18 @@ class Verdict(StrEnum):
     APPROVE = "approve"
     APPROVE_WITH_CONSTRAINTS = "approve_with_constraints"
     REVISE = "revise"
+    # REJECT and FORK_REQUIRED kept for backward compat (deserialization of old data)
+    # but are clamped to REVISE at aggregation time.
     REJECT = "reject"
     FORK_REQUIRED = "fork_required"
+
+
+class IterationMode(StrEnum):
+    """How deeply the next iteration should re-evaluate."""
+
+    REPLAN = "replan"
+    REVISE_CODE = "revise_code"
+    ADJUST_CONFIG = "adjust_config"
 
 
 class SeedVerdict(StrEnum):
@@ -87,6 +101,7 @@ class RiskLevel(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    CRITICAL = "critical"
 
 
 class PromotionRecommendation(StrEnum):

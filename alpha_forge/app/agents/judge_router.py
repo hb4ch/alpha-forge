@@ -61,7 +61,6 @@ def run_tier(
             (_build_judge(OverfitJudge, client), {
                 "plan": context.get("plan", ""),
                 "history": context.get("history"),
-                "iteration_count": context.get("iteration_count", 0),
                 "code": context.get("code", ""),
             }),
             (_build_judge(RealismJudge, client), {"plan": context.get("plan", ""), "config": context.get("config")}),
@@ -95,7 +94,6 @@ def run_tier(
             (_build_judge(OverfitJudge, client), {
                 "metrics": context.get("metrics"),
                 "history": context.get("history"),
-                "iteration_count": context.get("iteration_count", 0),
                 "code": context.get("code", ""),
             }),
             (_build_judge(RealismJudge, client), {"metrics": context.get("metrics"), "config": context.get("config")}),
@@ -129,19 +127,25 @@ def run_tier(
 
 
 def aggregate_verdict(outputs: list[JudgeOutput]) -> Verdict:
-    """Aggregate multiple judge verdicts into a single verdict.
+    """Unified aggregation for all tiers.
+
+    No judge can REJECT or FORK — those verdicts are clamped to REVISE
+    as a safety net (judges should no longer emit them after prompt updates).
 
     Rules:
-    - Any REJECT -> REJECT
-    - Any FORK_REQUIRED -> FORK_REQUIRED
-    - Any REVISE -> REVISE
-    - All APPROVE or APPROVE_WITH_CONSTRAINTS -> APPROVE_WITH_CONSTRAINTS if any constraints
-    - All APPROVE -> APPROVE
+    - Any REVISE (or clamped REJECT/FORK_REQUIRED) → REVISE
+    - Any APPROVE_WITH_CONSTRAINTS → APPROVE_WITH_CONSTRAINTS
+    - All APPROVE → APPROVE
     """
-    if any(o.verdict == Verdict.REJECT for o in outputs):
-        return Verdict.REJECT
-    if any(o.verdict == Verdict.FORK_REQUIRED for o in outputs):
-        return Verdict.FORK_REQUIRED
+    # Clamp legacy REJECT/FORK_REQUIRED to REVISE
+    for o in outputs:
+        if o.verdict in (Verdict.REJECT, Verdict.FORK_REQUIRED):
+            logger.warning(
+                "Judge %s returned %s — clamping to REVISE",
+                o.judge_type, o.verdict,
+            )
+            o.verdict = Verdict.REVISE
+
     if any(o.verdict == Verdict.REVISE for o in outputs):
         return Verdict.REVISE
     if any(o.verdict == Verdict.APPROVE_WITH_CONSTRAINTS for o in outputs):

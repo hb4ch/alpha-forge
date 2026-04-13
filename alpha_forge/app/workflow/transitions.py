@@ -9,9 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alpha_forge.app.domain.events import TRANSITION_TABLE, FamilyEvent
-from alpha_forge.app.domain.models import IdeaFamily, StrikeRecord
+from alpha_forge.app.domain.models import IdeaFamily
 from alpha_forge.app.domain.states import FamilyState
-from alpha_forge.app.domain.strikes import add_strike, should_pause_for_review
 
 
 @dataclass
@@ -30,8 +29,6 @@ class TransitionResult:
     new_state: FamilyState
     family: IdeaFamily
     side_effects: list[SideEffect] = field(default_factory=list)
-    strike_added: StrikeRecord | None = None
-    paused_for_review: bool = False
 
 
 class IllegalTransitionError(Exception):
@@ -58,9 +55,6 @@ class TransitionEngine:
             family: Current family state.
             event: The event being applied.
             context: Optional context dict with:
-                - strike_reason: str - reason for adding a strike
-                - is_red_strike: bool - whether this is a red strike
-                - iteration_id: str - current iteration ID
                 - score: float - new composite score (for qualified improvement)
 
         Returns:
@@ -72,49 +66,14 @@ class TransitionEngine:
         ctx = context or {}
         previous_state = family.state
         side_effects: list[SideEffect] = []
-        strike_added: StrikeRecord | None = None
-        updated_family = family
-
-        # Handle strike addition if context indicates one
-        if ctx.get("strike_reason"):
-            iteration_id = ctx.get("iteration_id", "unknown")
-            is_red = ctx.get("is_red_strike", False)
-            updated_family = add_strike(
-                updated_family,
-                iteration_id=iteration_id,
-                reason=ctx["strike_reason"],
-                is_red=is_red,
-            )
-            strike_added = updated_family.strike_history[-1]
-            side_effects.append(SideEffect(
-                type="strike_added",
-                data={"reason": ctx["strike_reason"], "is_red": is_red},
-            ))
-
-        # Check if strikes trigger pause for review (overrides normal transition)
-        if should_pause_for_review(updated_family):
-            new_state = FamilyState.PAUSED_FOR_REVIEW
-            updated_family = updated_family.model_copy(update={"state": new_state})
-            side_effects.append(SideEffect(
-                type="family_paused_for_review",
-                data={"strike_count": updated_family.strike_count, "red_strike_count": updated_family.red_strike_count},
-            ))
-            return TransitionResult(
-                previous_state=previous_state,
-                new_state=new_state,
-                family=updated_family,
-                side_effects=side_effects,
-                strike_added=strike_added,
-                paused_for_review=True,
-            )
 
         # Look up the transition
-        key = (updated_family.state, event)
+        key = (family.state, event)
         if key not in TRANSITION_TABLE:
-            raise IllegalTransitionError(updated_family.state, event)
+            raise IllegalTransitionError(family.state, event)
 
         new_state = TRANSITION_TABLE[key]
-        updated_family = updated_family.model_copy(update={"state": new_state})
+        updated_family = family.model_copy(update={"state": new_state})
 
         # Handle best score update
         if ctx.get("score") is not None and ctx["score"] > updated_family.best_qualified_score:
@@ -132,6 +91,4 @@ class TransitionEngine:
             new_state=new_state,
             family=updated_family,
             side_effects=side_effects,
-            strike_added=strike_added,
-            paused_for_review=False,
         )

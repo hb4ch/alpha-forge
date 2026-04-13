@@ -166,3 +166,41 @@ class TestIsQualifiedImprovement:
     def test_true_without_robustness(self) -> None:
         score = CompositeScore(alpha_quality=1.0)
         assert is_qualified_improvement(score, 0.0, robustness=None) is True
+
+    def test_false_when_core_test_fails(self) -> None:
+        """core_tests_passed=False should block qualification."""
+        score = CompositeScore(alpha_quality=1.0)
+        rob = make_robustness([
+            ("cost_2.0x", False, 0.5),  # Core test fails
+            ("cost_3.0x", True, 0.1),
+            ("slippage_2.0x", True, 0.03),
+        ])
+        assert rob.core_tests_passed is False
+        assert is_qualified_improvement(score, 0.0, rob) is False
+
+    def test_false_when_pass_rate_below_threshold(self) -> None:
+        """Core tests pass but pass_rate < 0.7 should block."""
+        score = CompositeScore(alpha_quality=1.0)
+        rob = make_robustness([
+            ("cost_2.0x", True, 0.05),
+            ("cost_3.0x", False, 0.5),
+            ("slippage_2.0x", True, 0.03),
+            ("slippage_3.0x", False, 0.5),
+            ("sub_period_stability", False, 0.5),
+        ])
+        assert rob.core_tests_passed is True
+        assert rob.pass_rate < 0.7
+        assert is_qualified_improvement(score, 0.0, rob) is False
+
+    def test_true_when_core_pass_and_rate_above_threshold(self) -> None:
+        """Core tests pass and pass_rate >= 0.7 should qualify."""
+        score = CompositeScore(alpha_quality=1.0)
+        rob = make_robustness([
+            ("cost_2.0x", True, 0.05),
+            ("cost_3.0x", True, 0.12),
+            ("slippage_2.0x", True, 0.03),
+            ("sub_period_stability", False, 0.5),  # 1 failure out of 4 → 75% pass
+        ])
+        assert rob.core_tests_passed is True
+        assert rob.pass_rate >= 0.7
+        assert is_qualified_improvement(score, 0.0, rob) is True

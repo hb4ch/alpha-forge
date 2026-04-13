@@ -366,8 +366,8 @@ class AlphaForgeApp(App):
         if name == "seed" and args:
             conv.add_system_message(f"Seeding: {' '.join(args)}")
             # TODO: spawn seed intake in background thread
-        elif name == "strike" and args and args[0] == "reset":
-            self._do_strike_reset(conv)
+        elif name == "requeue":
+            self._do_requeue(conv)
         elif name == "override" and args:
             if self._bus and self._bus._gate:
                 self._bus.release_gate({"action": "override", "verdict": args[0]})
@@ -400,10 +400,9 @@ class AlphaForgeApp(App):
         state = store.read_global_state()
         return state.get("active_family")
 
-    def _do_strike_reset(self, conv: ConversationStream) -> None:
-        """Reset strikes on the active family and re-queue it."""
+    def _do_requeue(self, conv: ConversationStream) -> None:
+        """Re-queue the active family so the orchestrator picks it up."""
         from alpha_forge.app.domain.states import FamilyState
-        from alpha_forge.app.domain.strikes import reset_strikes
         from alpha_forge.app.storage.markdown_store import MarkdownStore
 
         family_id = self._get_active_family_id()
@@ -413,8 +412,6 @@ class AlphaForgeApp(App):
 
         store = MarkdownStore(self.workspace)
         family = store.read_family(family_id)
-        old_strikes = family.strike_count
-        family = reset_strikes(family)
         # Preserve revision states so orchestrator resumes at the right phase
         revision_states = {
             FamilyState.PLAN_REVISION_REQUIRED,
@@ -424,11 +421,11 @@ class AlphaForgeApp(App):
         family = family.model_copy(update={"state": new_state})
         store.write_family(family)
         conv.add_system_message(
-            f"Strikes reset on {family_id}: {old_strikes} → 0, state → {new_state.value}"
+            f"Re-queued {family_id}: state → {new_state.value}"
         )
 
     def _do_retry(self, conv: ConversationStream) -> None:
-        """Reset strikes, re-queue, and restart the loop."""
-        self._do_strike_reset(conv)
+        """Re-queue and restart the loop."""
+        self._do_requeue(conv)
         conv.add_system_message("Restarting loop...")
         self._start_loop()

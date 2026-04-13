@@ -23,7 +23,7 @@ class MutationJudge(BaseJudge):
 - Base Hypothesis: {family.base_hypothesis}
 - Original Mechanism: {family.mechanism}
 - Current Iteration: {family.current_iteration}
-- Strike Count: {family.strike_count}
+- Best Score: {family.best_score:.3f}
 - Mutation Budget: {json.dumps(family.mutation_budget.model_dump())}
 - Allowed Mutations: {json.dumps(family.allowed_mutations.model_dump())}
 

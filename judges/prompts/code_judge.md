@@ -35,8 +35,6 @@ You must return one of:
 - `approve`
 - `approve_with_constraints`
 - `revise`
-- `reject`
-- `fork_required`
 
 ---
 
@@ -119,8 +117,8 @@ Required schema:
 
 Allowed values:
 
-- `verdict`: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`
-- risk fields: `low`, `medium`, `high`
+- `verdict`: `approve`, `approve_with_constraints`, `revise`
+- risk fields: `low`, `medium`, `high`, `critical`
 
 Rules:
 
@@ -159,10 +157,22 @@ Rules:
 ### Revise when
 - the core plan is okay but the implementation needs simplification or cleanup.
 
-### Reject when
-- edit surface is violated,
-- hidden state undermines trust,
-- or the code is too opaque for bounded research.
+### Revise when
+- the core plan is okay but the implementation needs simplification, cleanup, or fixing.
+- edit surface is violated — coach the researcher to move logic back into allowed files.
+- hidden state undermines trust — explain what state to remove and why.
+
+---
+
+## Coaching mandate
+
+When issuing `revise`, you MUST provide specific, actionable coaching in `must_fix`. Explain:
+1. **What** the code issue is (e.g. "signal_combiner.py uses a module-level mutable cache")
+2. **Why** it's harmful (e.g. "mutable state between runs causes non-reproducible results")
+3. **What to do instead** (e.g. "compute the lookup table inside combine_signals() as a local variable")
+
+Bad: "Code has hidden state."
+Good: "The `_CACHE` dict at module level in signal_combiner.py persists across runs, making results non-reproducible. Move the computation inside `combine_signals()` as a local variable."
 
 ---
 

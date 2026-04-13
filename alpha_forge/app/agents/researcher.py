@@ -64,6 +64,22 @@ Keep the plan specific and implementable. Do not be vague.
 - No normalization fit on full sample — must be rolling or expanding with lookback only
 - No label information may flow into features
 
+### Signal direction discipline
+- If the seed specifies signal directions (e.g. "high RSI → long", "positive z-score → long"),
+  you MUST follow those directions exactly. Do NOT invert signals based on textbook conventions.
+  Crypto markets often have inverted behavior compared to equities (e.g. RSI acts as momentum, not mean-reversion).
+- If the seed specifies .shift(1) on features, preserve that shift. It is part of the signal design.
+- If the seed specifies the trading universe (e.g. "BTC, ETH, SOL only"), add a "universe" key
+  to MODEL_CONFIG listing exactly those symbols.
+
+### Mechanism preservation
+- Vol targeting, regime-adaptive weights, and position sizing rules specified in the seed
+  are STRUCTURAL parts of the mechanism, not optional complexity to remove.
+- If the seed specifies vol targeting (e.g. "scale by target_vol / realized_vol"), you MUST
+  implement it. It controls risk across volatility regimes and is essential to the strategy.
+- If the seed specifies regime-adaptive weights, implement them — do not simplify to equal weights.
+- Only simplify components that the seed does NOT specify.
+
 ### Overfit discipline (Overfit Judge)
 - Keep degrees of freedom minimal — prefer 1-2 parameters over many
 - Do not stack multiple weak signals with tuned weights
@@ -86,7 +102,7 @@ Keep the plan specific and implementable. Do not be vague.
 - Hypothesis: {family.base_hypothesis}
 - Mechanism: {family.mechanism}
 - Iteration: {family.current_iteration}
-- Strike Count: {family.strike_count}
+- Best score so far: {family.best_score:.3f}
 
 ## Seed
 - Claim: {seed.raw_claim}
@@ -104,6 +120,8 @@ Keep the plan specific and implementable. Do not be vague.
   - Use fractional signals for conviction-weighted position sizing (e.g. Kelly fraction, z-score scaled)
 - No forward-looking operations — .shift(-N) is FORBIDDEN and will fail the time integrity guard
 - For forward returns in labels.py, use numpy array slicing: `ret[:n-k] = (close[k:] - close[:n-k]) / close[:n-k]`
+- If specifying a universe in MODEL_CONFIG, use exact trading pair names: BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT
+  Do NOT use bare asset names like "BTC" or "ETH" — these are Binance USDT trading pairs.
 
 ## Risk Management (engine-level, set via MODEL_CONFIG)
 The backtest engine supports automatic risk management. Set these optional keys in MODEL_CONFIG:
@@ -117,26 +135,84 @@ Draft the implementation plan.
 """
         return self.client.call(system, user_prompt, stream_callback=stream_callback)
 
+    def choose_iteration_mode(
+        self,
+        feedback: list[str],
+        family: IdeaFamily,
+        stream_callback=None,
+    ) -> dict:
+        """Ask the LLM to decide how to proceed after judge feedback.
+
+        Returns {"mode": "replan"|"revise_code"|"adjust_config", "reasoning": "..."}.
+        """
+        feedback_str = "\n".join(feedback) if feedback else "No feedback."
+
+        system = """You are deciding how to proceed after reviewing judge feedback on a crypto alpha strategy.
+
+Choose one of:
+- "replan": The strategy needs a fundamentally different approach. The current plan/mechanism is flawed.
+- "revise_code": The approach is sound but the implementation needs changes. Fix specific code issues.
+- "adjust_config": Only model_config.py parameters need tweaking (e.g. thresholds, stop-loss, timeframe).
+
+Return JSON: {"mode": "replan" or "revise_code" or "adjust_config", "reasoning": "one sentence why"}"""
+
+        user_prompt = f"""## Family
+- Hypothesis: {family.base_hypothesis}
+- Mechanism: {family.mechanism}
+- Iteration: {family.current_iteration}
+- Best score so far: {family.best_score:.3f}
+
+## Judge Feedback
+{feedback_str}
+
+Choose the iteration mode."""
+
+        result = self.client.call_json(system, user_prompt, stream_callback=stream_callback)
+        mode = result.get("mode", "replan")
+        if mode not in ("replan", "revise_code", "adjust_config"):
+            logger.warning("Invalid iteration mode '%s', defaulting to replan", mode)
+            mode = "replan"
+        return {"mode": mode, "reasoning": result.get("reasoning", "")}
+
     def write_code(
         self,
         family: IdeaFamily,
         plan: str,
         prior_feedback: list[str] | None = None,
         existing_code: dict[str, str] | None = None,
+        mode: str = "replan",
         stream_callback=None,
     ) -> dict[str, str]:
         """Generate the 4 research files based on the plan.
+
+        Args:
+            mode: "replan" (full generation), "revise_code" (fix specific issues),
+                  or "adjust_config" (only model_config.py changes).
 
         Returns a dict mapping filename -> code content.
         """
         feedback_str = "\n".join(prior_feedback) if prior_feedback else "No prior feedback."
         existing_code_str = _format_code_bundle(existing_code)
-        revision_guidance = (
-            "Revise the existing implementation in place. Preserve the current file contracts and"
-            " update only the allowed research files."
-            if existing_code
-            else "Generate the initial implementation for the allowed research files."
-        )
+
+        if mode == "adjust_config" and existing_code:
+            revision_guidance = (
+                "ONLY modify model_config.py parameters. Return ALL 4 files but keep"
+                " features.py, labels.py, and signal_combiner.py EXACTLY as they are."
+                " Focus on tuning configuration: thresholds, stop-loss, timeframe, etc."
+            )
+        elif mode == "revise_code" and existing_code:
+            revision_guidance = (
+                "Fix the specific issues identified in the judge feedback below."
+                " Preserve the overall approach and plan — only change what's broken."
+                " Return all 4 files with targeted fixes."
+            )
+        elif existing_code:
+            revision_guidance = (
+                "Revise the existing implementation in place. Preserve the current file contracts and"
+                " update only the allowed research files."
+            )
+        else:
+            revision_guidance = "Generate the initial implementation for the allowed research files."
 
         system = """You are a crypto alpha researcher implementing a trading strategy.
 Generate Python code for the 4 research files. You MUST respond with valid JSON
@@ -166,6 +242,22 @@ Rules:
 - Use only: pandas, numpy (already available)
 
 ## Critical requirements (judges will reject code that violates these)
+
+### Signal direction discipline
+- If the seed or plan specifies signal directions (e.g. "high RSI → positive signal"),
+  implement those directions EXACTLY. Do NOT invert based on textbook conventions.
+  In crypto, RSI and z-score often act as MOMENTUM indicators (high → continue up),
+  not mean-reversion indicators.
+- If features are specified with .shift(1), KEEP the .shift(1). It is intentional.
+- Use sqrt(252) for annualizing daily volatility, NOT sqrt(365).
+
+### Mechanism preservation
+- If the plan/seed specifies vol targeting, regime-adaptive weights, or z-score normalization
+  in the signal combiner, you MUST implement them. These are structural mechanism components.
+- Do NOT simplify regime-adaptive weights to equal weights unless the plan explicitly says to.
+- Do NOT remove vol targeting unless the plan explicitly says to.
+- If the plan specifies a trading universe, add "universe": [...] to MODEL_CONFIG.
+  Use exact Binance pair names: BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT. NOT bare "BTC", "ETH", etc.
 
 ### Data integrity (Leakage Judge)
 - All rolling/expanding window operations must use ONLY past data
@@ -235,7 +327,8 @@ Generate the 4 research files as JSON.
     ) -> list[str]:
         """Write generated code to the family's research directory.
 
-        Returns list of files written.
+        Returns list of files written.  Always overwrites — the
+        checkpoint/rollback mechanism in family_flow handles safety.
         """
         research_dir.mkdir(parents=True, exist_ok=True)
         written: list[str] = []

@@ -185,3 +185,20 @@ class ArtifactStore:
         if not path.exists():
             return None
         return self.load_json(path)
+
+    # ------------------------------------------------------------------
+    # Code checkpoints (known-good code for rollback)
+    # ------------------------------------------------------------------
+
+    def save_checkpoint(self, family_id: str, code_files: dict[str, str]) -> Path:
+        """Save known-good research code as the rollback checkpoint."""
+        path = self.root / "families" / family_id / "checkpoint_code.json"
+        self._atomic_write_json(path, code_files)
+        return path
+
+    def load_checkpoint(self, family_id: str) -> dict[str, str] | None:
+        """Load the most recent known-good code checkpoint."""
+        path = self.root / "families" / family_id / "checkpoint_code.json"
+        if not path.exists():
+            return None
+        return self.load_json(path)

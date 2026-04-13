@@ -161,7 +161,7 @@ Required schema:
 Allowed values:
 
 - `verdict`: `accept`, `accept_with_narrowing`, `reject`, `merge_with_existing_family`
-- all risk/quality fields: `low`, `medium`, `high`
+- all risk/quality fields: `low`, `medium`, `high`, `critical`
 
 Rules:
 

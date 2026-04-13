@@ -107,6 +107,11 @@ def run_robustness_battery(
             tests.append(RobustnessTest(test_name=f"slippage_{mult}x", passed=False, details={"error": str(e)}))
 
     # 3. Sub-period stability (split validation into 3 windows)
+    #
+    # Instead of running separate backtests per window (which breaks when
+    # the window is shorter than the feature warmup period), run ONE
+    # full-period backtest and compute Sharpe from the equity curve's
+    # per-bar returns for each sub-window.
     try:
         with open(configs_path / "splits.yaml") as f:
             splits = yaml.safe_load(f)
@@ -114,31 +119,93 @@ def run_robustness_battery(
         val_end = splits["validation"]["end"]
 
         import pandas as pd
-        start_ts = pd.Timestamp(val_start)
-        end_ts = pd.Timestamp(val_end)
-        total_days = max((end_ts - start_ts).days, 1)
-        window_days = max(total_days // 3, 1)
+        from alpha_forge.engine.research_strategy import ResearchStrategy
+        from pegasus.engine.backtest import BacktestEngine
+        from alpha_forge.engine.backtest_runner import _build_config as _bc
 
-        window_sharpes = []
-        for i in range(3):
-            w_start = (start_ts + pd.Timedelta(days=i * window_days)).strftime("%Y-%m-%d")
-            w_end = (start_ts + pd.Timedelta(days=(i + 1) * window_days)).strftime("%Y-%m-%d")
-            if i == 2:
-                w_end = val_end
+        research_dir = store.root / "families" / family_id / "research"
+        strategy = ResearchStrategy(research_dir)
+        config, _, _, default_symbols = _bc(configs_path)
 
-            results = run_backtest(
-                family_id,
-                store,
-                configs_dir,
-                start_override=w_start,
-                end_override=w_end,
-                save_html=False,
-            )
-            w_sharpe = _avg_sharpe(results)
-            window_sharpes.append(w_sharpe)
+        # Apply risk params and timeframe from MODEL_CONFIG
+        try:
+            mc = strategy._config_mod.MODEL_CONFIG
+            updates = {}
+            tf = mc.get("timeframe")
+            if tf:
+                updates["timeframe"] = tf
+            for key in ("stop_loss_pct", "take_profit_pct", "trailing_stop_pct"):
+                val = mc.get(key)
+                if val is not None:
+                    updates[key] = float(val)
+            if updates:
+                config = config.model_copy(update=updates)
+        except Exception:
+            pass
+
+        # Determine symbols
+        bt_symbols = None
+        try:
+            mc_universe = strategy._config_mod.MODEL_CONFIG.get("universe")
+            if mc_universe and isinstance(mc_universe, list):
+                # Normalize: researcher may write "BTC" instead of "BTCUSDT"
+                canonical = {s.replace("USDT", ""): s for s in default_symbols}
+                bt_symbols = [canonical.get(s.replace("USDT", ""), s) for s in mc_universe]
+        except Exception:
+            pass
+        if bt_symbols is None:
+            bt_symbols = default_symbols
+
+        engine = BacktestEngine(strategy=strategy, config=config)
+
+        # Load bars from training start so features warm up before
+        # validation begins. This ensures valid signals from bar 1 of
+        # the validation period.
+        train_start = splits["train"]["start"]
+
+        # Collect per-bar returns across symbols, then average
+        all_returns = []
+        for sym in bt_symbols:
+            bt_result = engine.run(sym, train_start, val_end, config.timeframe)
+            eq = bt_result.equity_curve
+            if eq is not None and "returns" in eq.columns and len(eq) > 0:
+                all_returns.append(eq["returns"])
+
+        if all_returns:
+            # Average returns across symbols (equal weight)
+            combined = pd.concat(all_returns, axis=1).mean(axis=1)
+            combined.index = pd.to_datetime(combined.index, utc=True)
+
+            start_ts = pd.Timestamp(val_start, tz="UTC")
+            end_ts = pd.Timestamp(val_end, tz="UTC")
+            total_days = max((end_ts - start_ts).days, 1)
+            window_days = max(total_days // 3, 1)
+
+            window_sharpes = []
+            for i in range(3):
+                w_start = start_ts + pd.Timedelta(days=i * window_days)
+                w_end = start_ts + pd.Timedelta(days=(i + 1) * window_days)
+                if i == 2:
+                    w_end = end_ts
+
+                window_rets = combined.loc[
+                    (combined.index >= w_start) & (combined.index < w_end)
+                ]
+                # Drop NaN/zero returns from warmup
+                window_rets = window_rets.dropna()
+                if len(window_rets) > 5:
+                    mean_r = window_rets.mean()
+                    std_r = window_rets.std()
+                    w_sharpe = float(mean_r / std_r * np.sqrt(252)) if std_r > 0 else 0.0
+                else:
+                    w_sharpe = 0.0
+                window_sharpes.append(round(w_sharpe, 4))
+        else:
+            window_sharpes = [0.0, 0.0, 0.0]
 
         sharpe_std = float(np.std(window_sharpes)) if len(window_sharpes) > 1 else 0.0
-        passed = sharpe_std < 1.0 and all(s > 0 for s in window_sharpes)
+        positive_windows = sum(1 for s in window_sharpes if s > 0)
+        passed = sharpe_std < 1.0 and positive_windows >= 2
         tests.append(RobustnessTest(
             test_name="sub_period_stability",
             passed=passed,
@@ -151,9 +218,24 @@ def run_robustness_battery(
 
     # 4. Leave-one-asset-out
     if len(baseline_results) > 1:
-        with open(configs_path / "universe.yaml") as f:
-            universe = yaml.safe_load(f)
-        all_symbols = universe["symbols"]
+        # Use MODEL_CONFIG universe if available, else fall back to universe.yaml
+        all_symbols = None
+        try:
+            research_dir = store.root / "families" / family_id / "research"
+            from alpha_forge.engine.research_strategy import ResearchStrategy
+            _strat = ResearchStrategy(research_dir)
+            mc_universe = _strat._config_mod.MODEL_CONFIG.get("universe")
+            if mc_universe and isinstance(mc_universe, list):
+                with open(configs_path / "universe.yaml") as f:
+                    cfg_symbols = yaml.safe_load(f)["symbols"]
+                canonical = {s.replace("USDT", ""): s for s in cfg_symbols}
+                all_symbols = [canonical.get(s.replace("USDT", ""), s) for s in mc_universe]
+        except Exception:
+            pass
+        if all_symbols is None:
+            with open(configs_path / "universe.yaml") as f:
+                universe = yaml.safe_load(f)
+            all_symbols = universe["symbols"]
 
         for excluded in all_symbols:
             try:

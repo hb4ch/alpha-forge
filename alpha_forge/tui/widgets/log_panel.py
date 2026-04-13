@@ -42,8 +42,8 @@ class LogPanel(RichLog):
     def install_handler(self) -> "TUILogHandler":
         handler = TUILogHandler(self)
         handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S"))
+        handler.setLevel(logging.INFO)
         logging.root.addHandler(handler)
-        logging.root.setLevel(logging.INFO)
         return handler
 
 

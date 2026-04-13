@@ -26,5 +26,4 @@ class SeedJudge(BaseJudge):
         card: SeedCard,
         existing_families: list[str] | None = None,
     ) -> SeedJudgeOutput:
-        raw = self.evaluate_raw(card=card, existing_families=existing_families)
-        return SeedJudgeOutput.model_validate(raw)
+        return self.evaluate(SeedJudgeOutput, card=card, existing_families=existing_families)

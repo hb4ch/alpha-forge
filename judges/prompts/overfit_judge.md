@@ -116,14 +116,14 @@ Required schema:
 
 Allowed values:
 
-- `verdict`: `approve`, `approve_with_constraints`, `revise`, `reject`, `fork_required`
-- risk/discipline fields: `low`, `medium`, `high`
+- `verdict`: `approve`, `approve_with_constraints`, `revise`
+- risk/discipline fields: `low`, `medium`, `high`, `critical`
 
 Rules:
 
 - Do not output anything before the JSON object.
 - Be specific about what is driving overfit risk.
-- Use `fork_required` when the proposal has changed enough that it no longer belongs in the same family.
+- You may NOT use `reject` or `fork_required`. Use `revise` with coaching feedback instead.
 
 ---
 
@@ -160,27 +160,31 @@ Often should fork, not mutate.
 
 ---
 
-## Approval heuristics
+## Verdict heuristics
 
 ### Approve when
 - the mechanism is preserved,
 - mutation budget remains,
 - flexibility remains small,
-- and the family history does not show repeated search abuse.
+- and the current proposal does not show search abuse patterns.
 
 ### Approve with constraints when
 - the proposal is plausible but needs stricter limits or stronger falsification tests.
 
 ### Revise when
+- you detect search abuse patterns (result-chasing, expanding degrees of freedom, post-hoc story rewriting).
 - the idea may be salvageable if simplified.
+- the hypothesis has drifted materially from the original.
 
-### Reject when
-- the process looks like result-chasing,
-- the search breadth is already too large,
-- or the justification is obviously post hoc.
+## Coaching mandate
 
-### Fork when
-- the hypothesis has changed materially.
+When issuing `revise`, you MUST provide specific, actionable coaching in `must_fix`. Explain:
+1. **What** the researcher is doing wrong (e.g. "adding a regime filter after poor results")
+2. **Why** it's harmful (e.g. "this is classic search abuse — carving away losing periods to inflate in-sample metrics")
+3. **What to do instead** (e.g. "go back to your original hypothesis and ask whether the mechanism predicts regime dependence a priori; if not, simplify by removing the regime filter")
+
+Bad: "Reduce overfit risk."
+Good: "You added 3 new thresholds (vol floor, smoothing window, regime cap) in one iteration. Each is a free parameter. Drop the regime cap — your mechanism doesn't predict asymmetric behavior — and freeze the vol floor at the a priori value."
 
 ---
 
@@ -199,10 +203,13 @@ If prior iterations failed due to code bugs, config mismatches, or empty code se
 
 ## Review stance
 
-Assume most "improvements" after repeated failures are overfit until proven otherwise.
+Evaluate the CURRENT proposal on its own merits. Iteration count alone is never suspicious — research takes many iterations.
 
-Your job is to preserve search discipline, not to encourage creativity.
+If code was unchanged between iterations (indicated by `code_changed: false` in the context), identical results are expected and must NOT be treated as evidence of stagnation or overfit.
 
+Implementation failures (code bugs, config mismatches, runtime errors) are NOT search abuse. Do not count them as "failed attempts" when assessing search breadth.
+
+Your job is to coach disciplined research, not to block exploration.
 A clean small hypothesis is better than a clever but flexible one.
 
 ---

@@ -33,18 +33,30 @@ class PipelineView(Static):
 
     def _render_pipeline(self) -> None:
         lines = []
-        reached = False
-        for step in PIPELINE_STEPS:
+        # Determine the index of the current stage in the pipeline (if present)
+        try:
+            current_idx = PIPELINE_STEPS.index(self._current_stage) if self._current_stage else -1
+        except ValueError:
+            current_idx = -1  # Stage not in pipeline (e.g. BACKTEST_FAILED, ITERATION_SUCCESS)
+
+        for i, step in enumerate(PIPELINE_STEPS):
             if self._current_stage and step == self._current_stage:
                 lines.append(f"[bold yellow]  \u25b8 {step.value}[/]")
-                reached = True
-            elif not reached and self._current_stage:
-                if PIPELINE_STEPS.index(step) < PIPELINE_STEPS.index(self._current_stage):
-                    lines.append(f"[green]  \u2713[/] [dim]{step.value}[/]")
-                else:
-                    lines.append(f"[dim]  \u25cb {step.value}[/]")
+            elif current_idx >= 0 and i < current_idx:
+                lines.append(f"[green]  \u2713[/] [dim]{step.value}[/]")
             else:
                 lines.append(f"[dim]  \u25cb {step.value}[/]")
+
+        # Show non-pipeline stages (errors, terminal) below the pipeline
+        if self._current_stage and current_idx < 0:
+            label = self._current_stage.value
+            if "FAILED" in label:
+                lines.append(f"\n[bold red]  \u2717 {label}[/]")
+            elif "SUCCESS" in label:
+                lines.append(f"\n[bold green]  \u2713 {label}[/]")
+            else:
+                lines.append(f"\n[bold yellow]  \u25b8 {label}[/]")
+
         self.update("\n".join(lines))
 
 
@@ -57,19 +69,16 @@ class FamilyInfo(Static):
         self.update("[dim italic]No family loaded[/]")
 
     def update_family(self, family: IdeaFamily) -> None:
-        strikes = "".join(
-            "[red]\u25cf[/]" if i < family.strike_count else "[dim]\u25cb[/]"
-            for i in range(3)
-        )
         budget = family.mutation_budget
+        iteration_progress = f"{family.current_iteration}/{family.max_iterations}"
         self.update(
             f"[bold]{family.family_id}[/]\n"
-            f"Iteration: {family.current_iteration}\n"
+            f"Iteration: {iteration_progress}\n"
             f"Seed: {family.seed_id}\n"
             f"State: {family.state}\n"
             f"\n"
-            f"Strikes: {strikes}\n"
-            f"Best: {family.best_qualified_score:.2f}\n"
+            f"Best score: {family.best_score:.3f}\n"
+            f"Best qualified: {family.best_qualified_score:.3f}\n"
             f"Budget: H:{budget.horizon} V:{budget.venue}\n"
         )
 

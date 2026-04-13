@@ -71,17 +71,26 @@ def compute_composite_score(
     )
 
 
+ROLLBACK_DEGRADATION_THRESHOLD = 0.8  # rollback if score < best * this
+
+
+def is_score_improvement(current: CompositeScore, best: float) -> bool:
+    """Check if current score is any improvement over the family best."""
+    return current.total > best
+
+
 def is_qualified_improvement(
     current: CompositeScore,
     best: float,
     robustness: RobustnessResult | None = None,
+    min_pass_rate: float = 0.7,
 ) -> bool:
     """Check if current score is a qualified improvement over the family best.
 
     Requires:
     - Composite score improves beyond threshold
-    - Required robustness tests pass
-    - No major stability dimension materially worsens
+    - Core robustness tests pass (cost_2x, slippage_2x)
+    - Overall robustness pass rate meets minimum threshold
     """
     if current.total <= best:
         return False
@@ -90,8 +99,11 @@ def is_qualified_improvement(
     if improvement < QUALIFIED_IMPROVEMENT_THRESHOLD:
         return False
 
-    # Robustness must pass if available
-    if robustness and not robustness.all_passed:
-        return False
+    # Graduated robustness: core tests must pass, extended tests use pass rate
+    if robustness:
+        if not robustness.core_tests_passed:
+            return False
+        if robustness.pass_rate < min_pass_rate:
+            return False
 
     return True

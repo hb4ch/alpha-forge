@@ -8,6 +8,7 @@ from alpha_forge.app.domain.states import FamilyState
 
 TERMINAL_STATES = {
     FamilyState.ARCHIVED_REJECTED,
+    FamilyState.BUDGET_EXHAUSTED,
     FamilyState.DONE,
 }
 
@@ -22,7 +23,6 @@ class TestTransitionTableValidity:
             assert isinstance(target, FamilyState), f"Invalid target: {target}"
 
     def test_no_duplicate_keys(self) -> None:
-        # Dict keys are unique by construction, but verify count matches
         keys = list(TRANSITION_TABLE.keys())
         assert len(keys) == len(set(keys))
 
@@ -40,18 +40,23 @@ class TestTerminalStatesNoOutgoing:
         outgoing = [k for k in TRANSITION_TABLE if k[0] == FamilyState.DONE]
         assert outgoing == []
 
-    def test_paused_for_review_has_outgoing(self) -> None:
+    def test_no_outgoing_from_budget_exhausted(self) -> None:
         outgoing = [
-            k for k in TRANSITION_TABLE if k[0] == FamilyState.PAUSED_FOR_REVIEW
+            k for k in TRANSITION_TABLE if k[0] == FamilyState.BUDGET_EXHAUSTED
         ]
-        assert len(outgoing) == 3
+        assert outgoing == []
 
 
 class TestNonTerminalStatesHaveTransitions:
     """Every non-terminal state has at least one outgoing transition."""
 
     def test_all_non_terminal_have_outgoing(self) -> None:
-        non_terminal = set(FamilyState) - TERMINAL_STATES
+        # States that exist in the enum but have no outgoing transitions
+        # because they're either unused legacy or handled specially
+        EXCLUDED = TERMINAL_STATES | {
+            FamilyState.PAUSED_FOR_REVIEW,  # removed from new architecture
+        }
+        non_terminal = set(FamilyState) - EXCLUDED
         for state in non_terminal:
             outgoing = [k for k in TRANSITION_TABLE if k[0] == state]
             assert len(outgoing) >= 1, f"{state} has no outgoing transitions"

@@ -147,3 +147,26 @@ class TestFamilyExists:
         assert markdown_store.family_exists("fam_001") is False
         markdown_store.write_family(make_family(family_id="fam_001"))
         assert markdown_store.family_exists("fam_001") is True
+
+
+class TestFamilyQueue:
+    def test_push_and_pop_fifo(self, markdown_store: MarkdownStore) -> None:
+        markdown_store.push_to_queue("fam_a")
+        markdown_store.push_to_queue("fam_b")
+        assert markdown_store.pop_from_queue() == "fam_a"
+        assert markdown_store.pop_from_queue() == "fam_b"
+
+    def test_pop_empty_returns_none(self, markdown_store: MarkdownStore) -> None:
+        assert markdown_store.pop_from_queue() is None
+
+    def test_push_deduplicates(self, markdown_store: MarkdownStore) -> None:
+        markdown_store.push_to_queue("fam_a")
+        markdown_store.push_to_queue("fam_a")
+        assert markdown_store.pop_from_queue() == "fam_a"
+        assert markdown_store.pop_from_queue() is None
+
+    def test_pop_sets_active_family(self, markdown_store: MarkdownStore) -> None:
+        markdown_store.push_to_queue("fam_a")
+        markdown_store.pop_from_queue()
+        state = markdown_store.read_global_state()
+        assert state["active_family"] == "fam_a"
