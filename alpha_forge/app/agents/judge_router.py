@@ -95,8 +95,13 @@ def run_tier(
                 "metrics": context.get("metrics"),
                 "history": context.get("history"),
                 "code": context.get("code", ""),
+                "plan": context.get("plan", ""),
             }),
-            (_build_judge(RealismJudge, client), {"metrics": context.get("metrics"), "config": context.get("config")}),
+            (_build_judge(RealismJudge, client), {
+                "metrics": context.get("metrics"),
+                "config": context.get("config"),
+                "plan": context.get("plan", ""),
+            }),
         ]
     else:
         raise ValueError(f"Unknown tier: {tier}")

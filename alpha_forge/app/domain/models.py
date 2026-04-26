@@ -307,6 +307,12 @@ class Iteration(BaseModel):
     composite_score: CompositeScore | None = None
     qualified_improvement: bool = False
     changed_files: list[str] = Field(default_factory=list)
+    # Counts how many times tier-2 has REVISEd this iteration. Used by the
+    # code-judge deadlock escape in family_flow.run_iteration.
+    code_revision_count: int = 0
+    # MUST_FIX items the code judge raised on the final attempt before the
+    # deadlock escape promoted the iteration. Surfaced to the result judge.
+    code_judge_deferred: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utc_now)
 
 
@@ -345,7 +351,10 @@ class IdeaFamily(BaseModel):
     current_iteration: int = 0
     failure_taxonomy: list[str] = Field(default_factory=list)
     score_history: list[float] = Field(default_factory=list)
-    next_iteration_mode: str = "replan"
+    # "replan" is the right default for fresh-from-seed families. Forks
+    # override this to "revise_code" so the child inherits the parent
+    # baseline as ground truth (see seed_flow.fork_family).
+    next_iteration_mode: str | None = "replan"
     editable_files: list[str] = Field(default_factory=lambda: [
         "research/features.py",
         "research/labels.py",

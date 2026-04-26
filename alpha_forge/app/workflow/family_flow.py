@@ -48,6 +48,11 @@ PLAN_ENTRY_STATES = {
     FamilyState.PLAN_REVISION_REQUIRED,
 }
 
+# Maximum tier-2 revision rounds before the loop force-promotes the iteration
+# to guards/backtest with the unresolved code-judge complaints recorded as
+# deferred items. Prevents the code judge from deadlocking the loop.
+MAX_CODE_REVISIONS = 3
+
 class BudgetExhaustedError(Exception):
     """Raised when a family has exhausted its iteration budget."""
 
@@ -180,22 +185,133 @@ class FamilyFlow:
 
         return "".join(diff_parts) or "No textual changes detected."
 
+    # Priority order for must_fix items: safety-critical first
+    _JUDGE_PRIORITY: dict[str, int] = {
+        "leakage": 0,
+        "code": 1,
+        "overfit": 2,
+        "realism": 3,
+        "result": 4,
+    }
+
     @staticmethod
-    def _extract_judge_feedback(judge_outputs: list) -> list[str]:
-        """Extract must_fix items and reasoning from judge outputs into actionable feedback."""
-        feedback: list[str] = []
+    def _detect_feedback_conflicts(
+        items: list[tuple[str, str]],
+    ) -> tuple[list[str], set[int]]:
+        """Detect contradictory advice across judges and return conflict notes.
+
+        Args:
+            items: list of (judge_type, must_fix_text) tuples
+
+        Returns:
+            (conflict_messages, indices_to_remove) — conflict-framed messages and
+            indices of original items that were merged into conflicts.
+        """
+        _REMOVE_VERBS = re.compile(
+            r'\b(drop|remove|exclude|eliminate|strip|disable)\b', re.IGNORECASE,
+        )
+        _KEEP_VERBS = re.compile(
+            r'\b(keep|add|include|restore|maintain|reintroduce|re-add)\b', re.IGNORECASE,
+        )
+        _TARGET_PATTERN = re.compile(r'\b([A-Z]{2,}(?:USDT)?)\b')
+
+        # Classify each item as remove/keep with a target
+        classified: list[tuple[str, str, str, int]] = []  # (action, target, judge, idx)
+        for idx, (judge, text) in enumerate(items):
+            targets = _TARGET_PATTERN.findall(text)
+            if not targets:
+                continue
+            target = targets[0]
+            if target in ("MUST", "FIX", "NOT", "AND", "THE", "ALL", "NAN", "SOL"):
+                # Skip common false-positive words; keep SOL only if SOLUSDT form
+                if target != "SOL" or "SOLUSDT" not in text:
+                    if target not in ("SOL",):
+                        continue
+            if _REMOVE_VERBS.search(text):
+                classified.append(("remove", target, judge, idx))
+            elif _KEEP_VERBS.search(text):
+                classified.append(("keep", target, judge, idx))
+
+        conflicts: list[str] = []
+        consumed: set[int] = set()
+        for i, (action_a, target_a, judge_a, idx_a) in enumerate(classified):
+            for j, (action_b, target_b, judge_b, idx_b) in enumerate(classified):
+                if j <= i or judge_a == judge_b:
+                    continue
+                if target_a != target_b:
+                    continue
+                if action_a == action_b:
+                    continue
+                # Found opposing advice on the same target
+                item_a = items[idx_a][1][:120]
+                item_b = items[idx_b][1][:120]
+                conflicts.append(
+                    f"JUDGES DISAGREE on {target_a}: [{judge_a}] says: {item_a}... "
+                    f"[{judge_b}] says: {item_b}... "
+                    f"Make a principled choice and commit — do not flip-flop between iterations."
+                )
+                consumed.add(idx_a)
+                consumed.add(idx_b)
+
+        return conflicts, consumed
+
+    @staticmethod
+    def _extract_judge_feedback(
+        judge_outputs: list,
+        max_items: int = 3,
+    ) -> list[str]:
+        """Extract must_fix items and reasoning from judge outputs into actionable feedback.
+
+        Prioritizes safety-critical items (leakage > code > overfit > realism > result),
+        detects conflicting advice across judges, and caps total MUST_FIX items to prevent
+        the researcher from attempting too many fixes at once.
+        """
+        # Collect reasoning summaries (always included, not capped)
+        reasoning_parts: list[str] = []
+        # Collect all must_fix items with attribution for prioritization
+        all_items: list[tuple[str, str, int]] = []  # (judge_type, must_fix_text, priority)
         for output in judge_outputs:
             judge_type = getattr(output, "judge_type", "unknown")
             verdict = getattr(output, "verdict", "")
             reasoning = getattr(output, "reasoning_summary", "") or getattr(output, "reasoning", "")
             must_fix = getattr(output, "must_fix", []) or []
-            if must_fix or reasoning:
-                parts = [f"[{judge_type}] verdict={verdict}"]
-                if reasoning:
-                    parts.append(f"  Reasoning: {reasoning}")
-                for item in must_fix:
-                    parts.append(f"  MUST FIX: {item}")
-                feedback.append("\n".join(parts))
+            if reasoning:
+                reasoning_parts.append(f"[{judge_type}] {verdict}\n  Reasoning: {reasoning}")
+            priority = FamilyFlow._JUDGE_PRIORITY.get(judge_type, 5)
+            for item in must_fix:
+                all_items.append((judge_type, item, priority))
+
+        # Detect and resolve conflicting advice
+        conflict_input = [(jt, text) for jt, text, _ in all_items]
+        conflict_msgs, consumed_indices = FamilyFlow._detect_feedback_conflicts(conflict_input)
+
+        # Remove consumed items and sort remaining by priority
+        remaining = [
+            (jt, text, pri)
+            for idx, (jt, text, pri) in enumerate(all_items)
+            if idx not in consumed_indices
+        ]
+        remaining.sort(key=lambda x: x[2])
+
+        # Build output: reasoning summaries + conflict messages + prioritized must_fix
+        feedback: list[str] = []
+        if reasoning_parts:
+            feedback.extend(reasoning_parts)
+        for msg in conflict_msgs:
+            feedback.append(msg)
+
+        items_added = len(conflict_msgs)
+        deferred = 0
+        for judge_type, item, _ in remaining:
+            if items_added >= max_items:
+                deferred += 1
+                continue
+            feedback.append(f"[{judge_type}] MUST FIX: {item}")
+            items_added += 1
+
+        if deferred > 0:
+            feedback.append(f"({deferred} lower-priority items deferred to next iteration)")
+
         return feedback
 
     def _detect_simplification_needs(self, family_id: str) -> list[str]:
@@ -278,6 +394,9 @@ class FamilyFlow:
         iter_num: int,
         family: IdeaFamily,
         code_changed: bool = True,
+        code: str = "",
+        plan: str = "",
+        code_judge_deferred: list[str] | None = None,
     ) -> dict[str, Any]:
         """Assemble tier-3 review context."""
         ctx = {
@@ -286,6 +405,8 @@ class FamilyFlow:
             "history": prior_feedback,
             "config": self._load_costs_config(),
             "prior_best": family.best_score,
+            "code": code,
+            "plan": plan,
         }
         if not code_changed:
             ctx["code_changed"] = False
@@ -293,6 +414,15 @@ class FamilyFlow:
                 "Code was unchanged from the prior iteration. "
                 "Identical results are expected and should NOT be "
                 "treated as evidence of stagnation or overfit."
+            )
+        if code_judge_deferred:
+            ctx["code_judge_deferred"] = list(code_judge_deferred)
+            ctx["code_judge_deferred_note"] = (
+                f"Tier-2 code judge requested {len(code_judge_deferred)} "
+                f"MUST_FIX items that could not be addressed after "
+                f"{MAX_CODE_REVISIONS} revision attempts. Score this run on its "
+                "merits; if the deferred items would plausibly explain the "
+                "result, downgrade. If not, treat them as advisory."
             )
         return ctx
 
@@ -302,6 +432,8 @@ class FamilyFlow:
         Prevents judge poisoning from accumulated failure history by
         windowing: only the most recent 3 iteration entries are shown
         in full; older entries are reduced to a score trajectory line.
+        Always surfaces the best-scoring iteration as an empirical anchor so
+        judges can recognize regressions from a previously working baseline.
         """
         history_path = self.store.root / "families" / family_id / "HISTORY.md"
         if not history_path.exists():
@@ -312,21 +444,42 @@ class FamilyFlow:
         sections = re.split(r'(?=^## \[)', full_text, flags=re.MULTILINE)
         entries = sections[1:] if len(sections) > 1 else []
 
-        if len(entries) <= 3:
-            return [full_text]  # Short history, show all
+        # Identify the best-scoring entry across the full history so the
+        # judges anchor on what already worked, not the most recent attempt.
+        best_anchor = ""
+        scored_entries: list[tuple[float, str]] = []
+        for entry in entries:
+            m = re.search(r'Score:\s*(-?[\d.]+)', entry)
+            if m:
+                scored_entries.append((float(m.group(1)), entry))
+        if scored_entries:
+            best_val, best_entry = max(scored_entries, key=lambda x: x[0])
+            best_anchor = (
+                f"\n[BEST IN LINEAGE: scored {best_val:+.3f} — what worked there is "
+                f"empirically validated; regressing from this baseline requires "
+                f"justification]\n{best_entry[:600]}\n"
+            )
 
-        # Extract score trajectory from older entries
+        if len(entries) <= 3:
+            # Short history — show full text, prepend the best anchor for emphasis.
+            prefix = (best_anchor + "\n") if best_anchor else ""
+            return [prefix + full_text]
+
+        # Extract score trajectory from older entries, filtering out guard/error failures
         older = entries[:-3]
         recent = entries[-3:]
 
+        scored = [e for e in older if re.search(r'Score:\s*-?[\d.]+', e)]
+
         scores: list[str] = []
-        for entry in older:
-            score_match = re.search(r'Score:\s*([\d.]+)', entry)
+        for entry in scored:
+            score_match = re.search(r'Score:\s*(-?[\d.]+)', entry)
             if score_match:
                 scores.append(score_match.group(1))
         score_trajectory = " → ".join(scores) if scores else "no scores"
         summary = (
-            f"[HISTORY: {len(older)} prior iterations, scores: {score_trajectory}]\n\n"
+            f"[HISTORY: {len(scored)} scored iterations, scores: {score_trajectory}]"
+            f"{best_anchor}\n"
         )
 
         return [summary + "".join(recent)]
@@ -390,11 +543,26 @@ class FamilyFlow:
             family = family.model_copy(update={"current_iteration": family.current_iteration + 1})
             self.store.write_family(family)
             self._update_global_state(family)
-            iteration = Iteration(
-                iteration_id=f"iter_{family.current_iteration}",
-                family_id=family.family_id,
-            )
-            return family, iteration, True, True
+
+            # Use next_iteration_mode to decide routing
+            mode = family.next_iteration_mode or "replan"
+            if mode in ("revise_code", "adjust_config") and existing and existing.plan:
+                # Skip plan phase — reuse previous plan, go straight to code
+                iteration = Iteration(
+                    iteration_id=f"iter_{family.current_iteration}",
+                    family_id=family.family_id,
+                    proposal_type=existing.proposal_type if existing else "initial",
+                    mutation_category=existing.mutation_category if existing else None,
+                    plan=existing.plan,
+                )
+                return family, iteration, False, True
+            else:
+                # Full replan — draft new plan
+                iteration = Iteration(
+                    iteration_id=f"iter_{family.current_iteration}",
+                    family_id=family.family_id,
+                )
+                return family, iteration, True, True
 
         if family.state == FamilyState.PLAN_REVISION_REQUIRED:
             if family.current_iteration <= 0:
@@ -413,12 +581,17 @@ class FamilyFlow:
                 raise ValueError("Code revision requires an existing current iteration")
             if not existing.plan:
                 raise ValueError("Code revision requires a persisted plan")
+            # Increment the tier-2 revision counter so the deadlock escape in
+            # run_iteration can detect when this iteration has been bouncing.
+            revision_count = (existing.code_revision_count or 0) + 1
             iteration = Iteration(
                 iteration_id=existing.iteration_id,
                 family_id=existing.family_id,
                 proposal_type=existing.proposal_type,
                 mutation_category=existing.mutation_category,
                 plan=existing.plan,
+                code_revision_count=revision_count,
+                code_judge_deferred=list(existing.code_judge_deferred or []),
             )
             return family, iteration, False, False
 
@@ -552,20 +725,34 @@ class FamilyFlow:
             self.artifact_store.save_code_snapshot(family_id, iter_num - 1, old_code)
         # Enrich feedback with judge must_fix items from this iteration
         code_feedback = list(prior_feedback) if prior_feedback else []
+        iteration_mode = family.next_iteration_mode or "replan"
+        # When revising with a known good score, emphasize targeted fixes
+        if family.best_score > 0 and iteration_mode in ("revise_code", "adjust_config"):
+            code_feedback.insert(0, (
+                f"IMPORTANT: Your best score is {family.best_score:.3f}. "
+                "Make TARGETED fixes only — address the top issues below. "
+                "Do NOT restructure working code."
+            ))
         judge_feedback = self._extract_judge_feedback(iteration.judge_outputs)
         if judge_feedback:
             code_feedback.append("## Judge feedback from this iteration (address these):\n" + "\n\n".join(judge_feedback))
+        # Pass existing code for revision modes so researcher can see what to modify
+        pass_existing = (
+            family.state == FamilyState.CODE_REVISION_REQUIRED
+            or iteration_mode in ("revise_code", "adjust_config")
+        )
         code_write_context = self._build_code_write_context(
             family,
             plan,
             code_feedback,
-            existing_code=old_code if family.state == FamilyState.CODE_REVISION_REQUIRED else None,
+            existing_code=old_code if pass_existing else None,
         )
         code_files = self.researcher.write_code(
             code_write_context["family"],
             code_write_context["plan"],
             code_write_context["prior_feedback"],
             existing_code=code_write_context["existing_code"],
+            mode=iteration_mode,
             stream_callback=self._stream_cb("Researcher"),
         )
         self._emit("llm_end", {"role": "Researcher"})
@@ -606,15 +793,43 @@ class FamilyFlow:
             "family_id": family_id, "iteration": iter_id,
         })
         if tier2_verdict == Verdict.REVISE:
-            logger.info("[%s] Code revision requested by tier-2 judges", iter_id)
-            family = self._transition_family(family, FamilyEvent.CODE_REVISION_REQUIRED)
-            iteration = iteration.model_copy(update={
-                "stage": IterationStage.ITERATION_FAILED,
-                "verdict": tier2_verdict,
-            })
-            return self._finalize_iteration(family_id, iteration, family)
-
-        family = self._transition_family(family, FamilyEvent.CODE_APPROVED)
+            if iteration.code_revision_count >= MAX_CODE_REVISIONS:
+                # Deadlock escape: the code judge has REVISEd this iteration
+                # MAX_CODE_REVISIONS times in a row. Force-promote with the
+                # unresolved complaints recorded as deferred items so the
+                # result judge can factor them in. Deterministic guards still
+                # gate everything downstream.
+                deferred = [
+                    f"[{o.judge_type}] {fix}"
+                    for o in tier2_outputs
+                    if o.verdict == Verdict.REVISE
+                    for fix in (o.must_fix or [])
+                ]
+                iteration = iteration.model_copy(update={"code_judge_deferred": deferred})
+                self.store.write_iteration(iteration)
+                self._append_history(
+                    family_id,
+                    f"Iteration {iter_id}: code-judge deadlock after "
+                    f"{iteration.code_revision_count} revisions; force-promoted "
+                    f"with {len(deferred)} deferred items.",
+                )
+                logger.warning(
+                    "[%s] Code-judge deadlock escape triggered (%d revisions); "
+                    "promoting to guards with deferred items: %s",
+                    iter_id, iteration.code_revision_count, deferred[:2],
+                )
+                family = self._transition_family(family, FamilyEvent.CODE_APPROVED)
+                # fall through to guards/backtest stage
+            else:
+                logger.info("[%s] Code revision requested by tier-2 judges", iter_id)
+                family = self._transition_family(family, FamilyEvent.CODE_REVISION_REQUIRED)
+                iteration = iteration.model_copy(update={
+                    "stage": IterationStage.ITERATION_FAILED,
+                    "verdict": tier2_verdict,
+                })
+                return self._finalize_iteration(family_id, iteration, family)
+        else:
+            family = self._transition_family(family, FamilyEvent.CODE_APPROVED)
 
         # --- Step 5: Run guards ---
         logger.info("[%s] Running guards...", iter_id)
@@ -719,6 +934,9 @@ class FamilyFlow:
             iter_num,
             family,
             code_changed=code_changed,
+            code=self._format_code_bundle(current_code) if current_code else "",
+            plan=plan,
+            code_judge_deferred=iteration.code_judge_deferred,
         )
         tier3_outputs = run_tier(3, result_review_context)
         self._emit("llm_end", {"role": "Judges"})
@@ -753,8 +971,10 @@ class FamilyFlow:
             if good_code:
                 self.artifact_store.save_checkpoint(family_id, good_code)
 
-        # Decide next action based on tier-3 verdict and score quality
-        if tier3_verdict in (Verdict.APPROVE, Verdict.APPROVE_WITH_CONSTRAINTS) and qualified:
+        # Decide next action based on score quality.
+        # Promotion depends on qualified improvement (score + robustness), not tier-3 verdict.
+        # Tier-3 coaching feedback is still recorded but does not block promotion.
+        if qualified:
             logger.info("[%s] Qualified improvement! Score: %.3f → holdout promotion", iter_id, score.total)
             family = self._transition_family(family, FamilyEvent.RESULT_APPROVED, context={
                 "score": score.total,

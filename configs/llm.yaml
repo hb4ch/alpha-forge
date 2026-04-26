@@ -1,24 +1,27 @@
 providers:
-  bigmodel:
-    api_key_env: BIGMODEL_API_KEY
-    base_url: https://open.bigmodel.cn/api/coding/paas/v4
+  openrouter:
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
   dgx_spark:
     api_key_env: DGX_SPARK_API_KEY
     base_url: http://192.168.3.46:8000/v1
 tiers:
   heavy:
-    provider: bigmodel
-    model: GLM-5.1
+    provider: openrouter
+    model: moonshotai/kimi-k2.5
   light:
     provider: dgx_spark
-    model: qwen3.5-35B-A3B
+    model: gemma-4-31B-nvfp4
 
+# Role routing (Option B split):
+#   heavy = Kimi K2.5 — critical paths: code gen + safety-critical judges
+#   light = Gemma 4 31B local — advisory judges (tolerate 90% quality, save OpenRouter spend)
 roles:
   researcher: heavy
   seed_judge: heavy
   leakage_judge: heavy
-  overfit_judge: heavy
-  realism_judge: heavy
   code_judge: heavy
   result_judge: heavy
-  mutation_judge: heavy
+  overfit_judge: light
+  realism_judge: light
+  mutation_judge: light

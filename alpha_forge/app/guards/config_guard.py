@@ -8,6 +8,11 @@ from pathlib import Path
 from alpha_forge.app.domain.models import GuardResult
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 
+# Operator configs that do NOT affect backtest determinism and MUST NOT be hashed.
+# llm.yaml selects which LLM runs the research loop — swapping providers/models
+# is an operator choice, not a research violation.
+EXCLUDED_CONFIGS: frozenset[str] = frozenset({"llm.yaml"})
+
 
 def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -23,14 +28,22 @@ def check_config_immutability(
     violations: list[str] = []
 
     if stored is None:
-        violations.append("No stored config hashes found for family")
+        # Bootstrap: no baseline yet (reset or migration). Store current hashes and pass.
+        hashes = {
+            f.name: _hash_file(f)
+            for f in sorted(configs_dir.glob("*.yaml"))
+            if f.name not in EXCLUDED_CONFIGS
+        }
+        artifact_store.save_config_hashes(family_id, hashes)
         return GuardResult(
             guard_name="config_immutability",
-            passed=False,
-            violations=violations,
+            passed=True,
+            violations=[],
         )
 
     for filename, original_hash in stored.items():
+        if filename in EXCLUDED_CONFIGS:
+            continue
         config_file = configs_dir / filename
         if not config_file.exists():
             violations.append(f"Config file deleted: {filename}")

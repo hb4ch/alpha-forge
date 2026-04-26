@@ -168,6 +168,14 @@ class LLMClient:
             return True
         if "429" in err_str or "500" in err_str or "502" in err_str or "503" in err_str:
             return True
+        # Mid-stream drops from upstream (observed with OpenRouter + Cloudflare):
+        # httpcore.RemoteProtocolError surfaces as "peer closed connection without
+        # sending complete message body (incomplete chunked read)" — transient,
+        # not a client error, safe to retry.
+        if "incomplete chunked read" in err_str or "peer closed connection" in err_str:
+            return True
+        if "remoteprotocolerror" in type(e).__name__.lower():
+            return True
         return False
 
     def call_json(

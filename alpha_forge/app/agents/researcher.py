@@ -203,6 +203,7 @@ Choose the iteration mode."""
         elif mode == "revise_code" and existing_code:
             revision_guidance = (
                 "Fix the specific issues identified in the judge feedback below."
+                " Address at most 3 issues — do NOT attempt to fix everything at once."
                 " Preserve the overall approach and plan — only change what's broken."
                 " Return all 4 files with targeted fixes."
             )

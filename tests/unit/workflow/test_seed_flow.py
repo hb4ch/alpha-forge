@@ -164,3 +164,89 @@ class TestForkFamily:
 
         state = store.read_global_state()
         assert "test_mech_v2" in (state.get("family_queue") or [])
+
+    def test_sets_revise_code_mode_on_child(
+        self, tmp_workspace: Path,
+    ) -> None:
+        """Forks should default to revise_code so the child inherits the parent baseline."""
+        store = MarkdownStore(tmp_workspace)
+        artifact_store = ArtifactStore(tmp_workspace)
+        parent = make_family(
+            family_id="test_mech_v1",
+            mechanism="test_mech",
+            state=FamilyState.QUEUED,
+        )
+        store.write_family(parent)
+
+        child = fork_family(
+            "test_mech_v1", "fork reason", store, artifact_store,
+            configs_dir="configs",
+        )
+
+        assert child.next_iteration_mode == "revise_code"
+        # Verify the persisted family also has it (state machine model_copy preserves it)
+        persisted = store.read_family(child.family_id)
+        assert persisted.next_iteration_mode == "revise_code"
+
+    def test_synthesizes_iter_0_with_fork_mutation_and_parent_plan(
+        self, tmp_workspace: Path,
+    ) -> None:
+        """Forking with a parent that has a saved iteration should embed the parent's
+        plan under a FORK MUTATION header so the revise_code branch has a usable plan."""
+        from alpha_forge.app.domain.models import Iteration
+        from alpha_forge.app.domain.states import IterationStage
+
+        store = MarkdownStore(tmp_workspace)
+        artifact_store = ArtifactStore(tmp_workspace)
+        parent = make_family(
+            family_id="test_mech_v1",
+            mechanism="test_mech",
+            state=FamilyState.QUEUED,
+        )
+        store.write_family(parent)
+        store.write_iteration(
+            Iteration(
+                iteration_id="iter_3",
+                family_id="test_mech_v1",
+                plan="THE PARENT BASELINE PLAN",
+                stage=IterationStage.ITERATION_SUCCESS,
+            )
+        )
+
+        child = fork_family(
+            "test_mech_v1", "tighten regime filter", store, artifact_store,
+            configs_dir="configs",
+        )
+
+        child_iter = store.read_iteration(child.family_id)
+        assert child_iter is not None
+        assert child_iter.iteration_id == "iter_0"
+        assert "## FORK MUTATION" in child_iter.plan
+        assert "tighten regime filter" in child_iter.plan
+        assert "THE PARENT BASELINE PLAN" in child_iter.plan
+
+    def test_synthetic_iter_handles_parent_without_iteration(
+        self, tmp_workspace: Path,
+    ) -> None:
+        """When the parent has no CURRENT_ITERATION, the synthetic plan still embeds
+        the fork rationale so the child has a usable starting point."""
+        store = MarkdownStore(tmp_workspace)
+        artifact_store = ArtifactStore(tmp_workspace)
+        parent = make_family(
+            family_id="test_mech_v1",
+            mechanism="test_mech",
+            state=FamilyState.QUEUED,
+        )
+        store.write_family(parent)
+
+        child = fork_family(
+            "test_mech_v1", "no parent iter case", store, artifact_store,
+            configs_dir="configs",
+        )
+
+        child_iter = store.read_iteration(child.family_id)
+        assert child_iter is not None
+        assert child_iter.iteration_id == "iter_0"
+        assert "## FORK MUTATION" in child_iter.plan
+        assert "no parent iter case" in child_iter.plan
+        assert "no parent plan available" in child_iter.plan

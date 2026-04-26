@@ -40,12 +40,17 @@ TRANSITION_TABLE: dict[tuple[FamilyState, FamilyEvent], FamilyState] = {
     (FamilyState.NEW, FamilyEvent.FAMILY_CREATED): FamilyState.QUEUED,
     # Queue -> plan
     (FamilyState.QUEUED, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
+    # Forks start QUEUED with next_iteration_mode='revise_code' and skip
+    # straight to code review (the parent baseline is the inherited plan).
+    (FamilyState.QUEUED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     # Plan review outcomes
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_APPROVED): FamilyState.PLAN_APPROVED,
     (FamilyState.PLAN_IN_REVIEW, FamilyEvent.PLAN_REVISION_REQUIRED): FamilyState.PLAN_REVISION_REQUIRED,
     # Plan revision / re-entry
     (FamilyState.PLAN_REVISION_REQUIRED, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
     (FamilyState.ITERATE, FamilyEvent.PLAN_SUBMITTED): FamilyState.PLAN_IN_REVIEW,
+    # Iterate -> code directly (revise_code / adjust_config mode skips plan)
+    (FamilyState.ITERATE, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     # Plan approved -> coding
     (FamilyState.PLAN_APPROVED, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,
     (FamilyState.CODING, FamilyEvent.CODE_SUBMITTED): FamilyState.CODE_IN_REVIEW,

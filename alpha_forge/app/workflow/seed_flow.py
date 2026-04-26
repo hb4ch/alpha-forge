@@ -15,10 +15,11 @@ from alpha_forge.app.domain.events import FamilyEvent
 from alpha_forge.app.domain.models import (
     AllowedMutations,
     IdeaFamily,
+    Iteration,
     SeedCard,
     SeedJudgeOutput,
 )
-from alpha_forge.app.domain.states import FamilyState, SeedVerdict
+from alpha_forge.app.domain.states import FamilyState, IterationStage, SeedVerdict
 from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore
 from alpha_forge.app.workflow.transitions import TransitionEngine
@@ -261,6 +262,32 @@ def fork_family(
 
     # Store config hashes for config guard
     _store_config_hashes(artifact_store, child_id, configs_dir)
+
+    # Set the child's first iteration mode to revise_code so the researcher
+    # inherits the parent baseline as ground truth instead of redrafting from
+    # the hypothesis. _prepare_iteration's revise_code branch
+    # (family_flow.py: NEW_ITERATION_STATES handling) requires both `existing`
+    # and `existing.plan` to be present, so we synthesize an iter_0 with the
+    # parent's plan prepended by the fork rationale.
+    child = child.model_copy(update={"next_iteration_mode": "revise_code"})
+    store.write_family(child)
+
+    parent_iter = store.read_iteration(parent_id)
+    parent_plan = parent_iter.plan if parent_iter and parent_iter.plan else (
+        "(no parent plan available; baseline derived from inherited code on disk)"
+    )
+    inherited_plan = (
+        f"## FORK MUTATION (from {parent_id})\n{fork_reason}\n\n"
+        f"## INHERITED BASELINE PLAN\n{parent_plan}"
+    )
+    synthetic = Iteration(
+        iteration_id="iter_0",
+        family_id=child_id,
+        iteration_mode="replan",  # the parent's iteration was a replan
+        plan=inherited_plan,
+        stage=IterationStage.ITERATION_SUCCESS,  # treat as completed prior baseline
+    )
+    store.write_iteration(synthetic)
 
     # Transition to QUEUED
     engine = TransitionEngine()
