@@ -57,9 +57,45 @@ Signals must be a pd.Series with values between -1.0 and 1.0:
 ## Available Bar Columns
 `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`
 
+## Alternative Data Sources (opt-in)
+
+`compute_features(bars)` is OHLCV-only by default. If a hypothesis requires
+non-price signals, import `MultiSourceProvider` inside `features.py` and read
+the relevant series. The data is local (solana-pegasus ETL parquet); no
+network calls or DB access.
+
+```python
+from pegasus.data.multi_source import MultiSourceProvider
+
+def compute_features(bars: pd.DataFrame) -> pd.DataFrame:
+    df = bars.copy()
+    with MultiSourceProvider() as p:
+        fr = p.get_funding_rate("BTCUSDT", df.index.min(), df.index.max())
+    # Resample/forward-fill to bar frequency, shift(1) to avoid lookahead, etc.
+    ...
+```
+
+| Source | Method | Granularity | Coverage | Keys / notes |
+|---|---|---|---|---|
+| Funding rate | `get_funding_rate(symbol, start, end)` | 8h | 2022-04 → present | BTCUSDT, ETHUSDT only (raises on others) |
+| Open interest | `get_open_interest(symbol, start, end, interval='1h')` | 1h | **forward-only** (~30d window) | BTCUSDT, ETHUSDT only; REST-paginated |
+| Chain TVL | `get_chain_tvl(chain, start, end)` | daily | 2022-04 → present | Arbitrum, Base, Ethereum, Solana |
+| Protocol TVL | `get_protocol_tvl(protocol, start, end, chain='Total')` | daily | 2022 → present | aave, lido, uniswap (chain is a column filter) |
+| DEX volume | `get_dex_volume(chain, start, end, protocol='Total')` | daily | 2022 → present | per-chain partition; protocol is a column filter |
+| Stablecoin supply | `get_stablecoin(chain, start, end, stablecoin='peggedUSD')` | daily | 2022 → present | per-chain partition; peg type is a column filter |
+
+**Gotchas:**
+- All returned DataFrames are indexed by UTC `datetime`. Bar timestamps are
+  also UTC; align with `.reindex(bars.index, method='ffill')` for daily-into-bar
+  alignment, then `shift(1)` to enforce causality.
+- Open interest history is bounded by Binance's REST API window. Strategies
+  that need long history will fail — restrict to recent windows or skip.
+- `protocol_tvl` and `dex_volume` accept `"Total"` as the chain/protocol
+  filter for the aggregate; named values are also valid.
+
 ## Rules
 - NO forward-looking operations (no `.shift(-N)` with N > 0)
-- NO external data sources
-- NO database access
+- NO external data sources (the alt-data above is local parquet, NOT external)
+- NO database access (DuckDB inside `MultiSourceProvider` reads local parquet only)
 - Only use pandas and numpy for computations
 - Keep strategies simple and mechanistically motivated
