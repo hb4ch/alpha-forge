@@ -1,4 +1,7 @@
 providers:
+  deepseek:
+    api_key_env: DEEPSEEK_API_KEY
+    base_url: https://api.deepseek.com
   openrouter:
     api_key_env: OPENROUTER_API_KEY
     base_url: https://openrouter.ai/api/v1
@@ -7,15 +10,17 @@ providers:
     base_url: http://192.168.3.46:8000/v1
 tiers:
   heavy:
-    provider: openrouter
-    model: moonshotai/kimi-k2.5
+    provider: deepseek
+    model: deepseek-v4-pro
   light:
     provider: dgx_spark
     model: gemma-4-31B-nvfp4
 
-# Role routing (Option B split):
-#   heavy = Kimi K2.5 — critical paths: code gen + safety-critical judges
-#   light = Gemma 4 31B local — advisory judges (tolerate 90% quality, save OpenRouter spend)
+# Role routing:
+#   heavy = DeepSeek-V4-Pro (official API) — critical paths: code gen + safety-critical judges.
+#           Tied with Kimi K2.5 on quality (93% pass) but ~2.6x faster on plan generation
+#           and meaningfully cheaper per token. See scripts/model_eval.py for the eval harness.
+#   light = Gemma 4 31B local — advisory judges (tolerate 90% quality, save spend)
 roles:
   researcher: heavy
   seed_judge: heavy

@@ -9,6 +9,7 @@ Usage:
 Env vars:
     OPENROUTER_API_KEY  — required for OpenRouter models
     SILICONFLOW_API_KEY — required for DeepSeek via SiliconFlow
+    DEEPSEEK_API_KEY    — required for official DeepSeek API (api.deepseek.com)
     DGX_SPARK_API_KEY   — for local DGX Spark models (default: sk-1234)
 """
 import json
@@ -32,9 +33,17 @@ from alpha_forge.app.agents.llm_client import LLMClient
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 SILICONFLOW_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_URL = "https://api.deepseek.com"
 DGX_SPARK_KEY = os.environ.get("DGX_SPARK_API_KEY", "sk-1234")
 
 CANDIDATES = {
+    "deepseek-v4-pro": {
+        # Official DeepSeek API. Model name per user spec.
+        "model": "deepseek-v4-pro",
+        "base_url": DEEPSEEK_URL,
+        "api_key": DEEPSEEK_KEY,
+    },
     "deepseek-v3.2": {
         "model": "Pro/deepseek-ai/DeepSeek-V3.2",
         "base_url": "https://api.siliconflow.cn/v1",

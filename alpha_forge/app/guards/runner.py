@@ -12,6 +12,7 @@ from alpha_forge.app.guards.reproducibility_guard import (
     check_reproducibility,
     collect_reproducibility_metadata,
 )
+from alpha_forge.app.guards.seed_mechanism_guard import check_seed_mechanism
 from alpha_forge.app.guards.split_guard import check_split_isolation
 from alpha_forge.app.guards.timestamp_guard import check_time_integrity
 from alpha_forge.app.storage.artifact_store import ArtifactStore
@@ -73,6 +74,20 @@ def run_all_guards(
         family.family_id,
         collect_reproducibility_metadata(store.root),
     )
+
+    # 6. Seed-mechanism fidelity guard
+    # Catches researcher substituting a proxy when the seed mandates a
+    # specific MultiSourceProvider call. Skips silently for seeds that
+    # don't reference the provider.
+    seed_card = None
+    try:
+        seed_card = store.read_seed(family.seed_id, stage="accepted")
+    except Exception:
+        pass  # No seed on disk → guard runs against family fields only
+    result = check_seed_mechanism(family_dir, seed_card, family)
+    results.append(result)
+    if not result.passed:
+        logger.warning("Seed mechanism guard failed: %s", result.violations)
 
     return results
 
