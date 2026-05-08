@@ -66,9 +66,32 @@ Can the key logic be validated with deterministic guards or simple assertions?
   - Binary all-in signals are a red flag: a single bad trade risks total capital destruction.
   - Prefer conviction-weighted sizing: scale signal magnitude by z-score, signal strength, or Kelly fraction.
 - Does model_config.py include the required `"timeframe"` key matching the seed horizon?
-- Does model_config.py include at least a `"stop_loss_pct"` for downside protection?
-  - `"stop_loss_pct"`, `"take_profit_pct"`, `"trailing_stop_pct"` are engine-level risk params.
-  - A strategy with no stop-loss and binary sizing is structurally unsound for backtest.
+- Risk management is split into TWO valid patterns; pick one and check the
+  implementation for consistency with the chosen pattern. Both are valid:
+  - **Pattern A** (signal-driven, simple exits): signal naturally returns to 0
+    on mechanism conditions. `stop_loss_pct` ~0.02–0.05 is a small safety net
+    handled by the engine. Worked example: eth_momentum_v1.
+  - **Pattern B** (signal owns ALL exits, engine stops sentinel-wide): the
+    strategy has explicit bar-level exit logic (ATR-scaled stops, range
+    re-entry, trailing extremes) that the engine's pct stops cannot express.
+    The signal_combiner runs a **stateful loop** tracking entry, init stop,
+    trailing extreme, exit conditions. Signal returns to 0 when the strategy
+    would have exited. Magnitude must be CONSTANT while in position (e.g.
+    always +0.5) — per-bar `vol_scale * raw` modulation creates per-bar
+    resizing that the engine treats as new trades. Engine stops are sentinels:
+    `stop_loss_pct=0.30, trailing_stop_pct=0.30` (effectively disabled, kill
+    switch only). Worked example: volatility_compression_atrclose_v1's
+    faithful-port signal_combiner.
+- A stateful loop in signal_combiner.py is **NOT a code smell when used per
+  Pattern B** — it is the canonical way to embed strategy-specific exit logic.
+  Do not flag stateful loops as anti-patterns; only flag if they violate
+  reproducibility (e.g., module-level mutable state, caches that persist
+  across function calls). Per-call local state machines are valid and
+  reset cleanly per backtest invocation.
+- Setting `stop_loss_pct=0.30` is **NOT an anti-pattern under Pattern B**;
+  it is the documented sentinel value when exits live in signal_combiner.
+  Only flag if Pattern A is chosen but stops are also disabled (that's
+  genuinely missing risk management).
 
 ---
 

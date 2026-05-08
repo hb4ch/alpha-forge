@@ -155,6 +155,17 @@ You are invoked at different pipeline stages. Adjust your expectations according
 - **Engine modifications**: The backtest engine is immutable. Do not request runtime assertions in the engine.
 - **Config changes**: `configs/costs.yaml` and `configs/splits.yaml` are system-level and immutable. If the plan mentions different slippage than the config, note it but do not demand the researcher fix system config.
 - **Partition-safe rolling**: Standard pandas `rolling()` on the full series is acceptable. The backtest engine handles train/val/test splitting — features are computed on the full bar history and the engine evaluates only on the correct split. Do NOT demand per-partition feature computation.
+- **Stateful signal_combiner loops**: A Python loop in `signal_combiner.py`
+  that tracks position state (e.g. `in_long`, `trailing_extreme`, `init_stop`)
+  is **NOT split contamination**. The engine calls `compute_features` and
+  `combine_signals` on the bars passed to that backtest invocation; when
+  evaluating validation, only validation bars are passed, so the loop's
+  state starts fresh at bar 0 of validation. There is no carry-over from
+  training. This is the canonical Pattern B implementation for strategies
+  with bar-level exit logic (ATR stops, range re-entry, trailing extremes).
+  Do NOT flag stateful loops as split-contamination unless the loop reads
+  from an external module-level variable, a cache, or other state that
+  would actually persist across `combine_signals` calls.
 
 ### must_fix items must be actionable
 Every `must_fix` item must be something the researcher can actually fix by editing the 4 research files. If an issue is outside the researcher's control, note it in `reasoning_summary` but do NOT put it in `must_fix`.
