@@ -54,6 +54,92 @@ Signals must be a pd.Series with values between -1.0 and 1.0:
 - `"take_profit_pct"`: engine-level take-profit (e.g. 0.05 = 5%)
 - `"trailing_stop_pct"`: engine-level trailing stop (e.g. 0.03 = 3%)
 
+## Engine Integration Patterns
+
+The engine's `stop_loss_pct` / `trailing_stop_pct` fire **independently of the
+signal**. If your strategy has its own bar-level exit logic (ATR-scaled stops,
+range re-entry, propulsion-efficiency, slope-reversal), you must decide where
+that logic lives. There are two valid patterns; pick one explicitly.
+
+### Pattern A — signal-driven (engine stops as catastrophic safety net)
+
+Use when exits are **structurally simple** and align with fixed-pct stops.
+
+- `signal_combiner` emits the desired position; signal returns to 0 *only* on
+  natural mechanism conditions (e.g. trend gate closes, regime flips)
+- Engine's `stop_loss_pct` (~0.02–0.05) is a small safety net for catastrophic
+  moves; rarely fires in practice
+- Worked example: `eth_exhibits_institutional_momentum_over_weekly_ho_v1`
+  (the only family in this workspace with a passing holdout). It uses RSI +
+  20-day momentum + 20-day z-score with a binary trend-strength gate; the
+  signal goes to 0 when the gate closes; engine `stop_loss_pct=0.025` is the
+  safety net.
+
+### Pattern B — event-driven (signal owns ALL exits, engine stops disabled)
+
+Use when exits are **structurally rich** — ATR-scaled stops, range re-entry,
+trailing stops, multiple exit conditions.
+
+Why: the engine's pct stops fire concurrently with signal-driven exits. Your
+2×ATR stop will be pre-empted by the engine's tighter `stop_loss_pct`. Result:
+trade dynamics diverge from a custom event-driven backtest, often dramatically
+(see `volatility_compression_atrclose_and_40-bar_high-lo_v1` for a 100×
+trade-count discrepancy that this pattern resolves).
+
+- `signal_combiner` keeps a stateful loop tracking entry, init stop, trailing
+  extreme, and exit conditions. When the strategy *would* exit, return signal
+  to 0 immediately
+- **Magnitude must be constant** while in position (e.g. always +0.5). Any
+  per-bar `vol_scale * raw` modulation generates per-bar position resizing
+  that the engine counts as new trades
+- Engine stops are **sentinels only**: `stop_loss_pct=0.30`, `trailing_stop_pct=0.30`
+  (i.e. effectively disabled — a 30% adverse move triggers a kill switch that
+  shouldn't fire under normal operation)
+- Worked example skeleton:
+
+  ```python
+  def combine_signals(features, config):
+      raw = pd.Series(0.0, index=features.index)
+      in_long = False; entry_price = init_stop = trailing_extreme = None
+      for i in range(len(features)):
+          c = features['close'].iloc[i]
+          atr = features['atr_20'].iloc[i]
+          if not in_long:
+              if features['long_entry'].iloc[i]:
+                  in_long = True
+                  entry_price = c
+                  init_stop = c - 2 * atr
+                  trailing_extreme = c
+          else:
+              trailing_extreme = max(trailing_extreme, c)
+              trail = trailing_extreme - 2.5 * atr
+              if c < init_stop or c < trail or c < features['range_high_at_entry'].iloc[i]:
+                  in_long = False
+          if in_long:
+              raw.iloc[i] = 0.5  # CONSTANT magnitude
+      return raw
+  ```
+
+### Choosing between the patterns
+
+Quick decision rule:
+- Strategy has **only entry conditions**, exits are "until conditions reverse"
+  → Pattern A
+- Strategy has **explicit exit conditions** distinct from entry conditions
+  → Pattern B
+- When in doubt, run `scripts/preflight_via_engine.py` against both versions
+  and pick the one that produces consistent metrics across train/val/holdout.
+
+### Pre-flight ALWAYS via engine, not custom backtest
+
+`scripts/preflight_via_engine.py` runs your strategy through the actual engine
+(same `run_backtest()` the loop uses) across train/val/holdout × cost levels
+and emits a pass/fail decision. **Never finalize a seed based on a custom
+event-driven pre-flight alone** — they routinely diverge from engine semantics
+by 10×–100× on trade count and key metrics. Use custom pre-flights for early
+sanity-check (does the IC have the expected sign?), but the *gating* pre-flight
+must use the engine.
+
 ## Available Bar Columns
 `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`
 

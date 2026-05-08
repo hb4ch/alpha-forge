@@ -129,7 +129,34 @@ The backtest engine supports automatic risk management. Set these optional keys 
 - "stop_loss_pct": float — exit when loss exceeds this % from entry (e.g. 0.02 = 2% SL)
 - "take_profit_pct": float — exit when gain exceeds this % from entry (e.g. 0.05 = 5% TP)
 - "trailing_stop_pct": float — exit when price retraces this % from peak since entry (e.g. 0.03 = 3%)
-These are enforced by the engine using intra-bar high/low checks. The strategy code does NOT need to implement stop logic.
+
+These engine stops fire INDEPENDENTLY of and CONCURRENTLY WITH any signal-driven
+exit. If your strategy has its own bar-level exit logic (ATR-scaled stops, range
+re-entry, propulsion-efficiency, etc.), you MUST decide where exits live. Two
+patterns — pick one explicitly in the plan:
+
+### Pattern A — signal-driven, engine stops as catastrophic safety net
+Use when exits are STRUCTURALLY SIMPLE: signal naturally returns to 0 when the
+mechanism's conditions fail (e.g. trend gate closes). Engine `stop_loss_pct`
+~0.02–0.05 is a small safety net that rarely fires.
+Worked example: `eth_exhibits_institutional_momentum_over_weekly_ho_v1` —
+RSI/momentum/zscore composite, trend-strength gate, signal goes to 0 when gate
+closes, engine `stop_loss_pct=0.025`.
+
+### Pattern B — signal owns ALL exits, engine stops disabled (sentinel-wide)
+Use when exits are STRUCTURALLY RICH (ATR-scaled stops, range re-entry, multiple
+exit conditions). Engine pct stops will pre-empt your bar-level stops if they
+fire first; this routinely produces 10×–100× more "trades" than expected.
+- `signal_combiner` keeps a stateful loop tracking entry / init stop / trailing
+  extreme / exit conditions. When the strategy WOULD exit, return signal to 0.
+- Magnitude must be CONSTANT while in position (e.g. always +0.5). Per-bar
+  `vol_scale * raw` modulation generates per-bar resizing the engine counts as
+  trades.
+- Engine stops are sentinels: `stop_loss_pct=0.30, trailing_stop_pct=0.30`
+  (effectively disabled).
+
+When you start drafting, ask yourself: does the seed describe explicit exit
+conditions distinct from entry conditions? If YES → Pattern B. If NO → Pattern A.
 
 Draft the implementation plan.
 """
@@ -279,7 +306,36 @@ MODEL_CONFIG required/optional keys:
 - "stop_loss_pct": float — optional, engine-level stop-loss (e.g. 0.02 = 2%)
 - "take_profit_pct": float — optional, engine-level take-profit (e.g. 0.05 = 5%)
 - "trailing_stop_pct": float — optional, engine-level trailing stop (e.g. 0.03 = 3%)
-These risk params are handled by the engine automatically — do NOT implement stop logic in signal_combiner.py.
+
+### Engine integration patterns (CRITICAL)
+The engine's pct stops fire INDEPENDENTLY of and CONCURRENTLY WITH any
+signal-driven exit. Pick ONE pattern per the plan:
+
+- **Pattern A (signal-driven, engine stops as safety net):** the strategy's
+  signal naturally returns to 0 when mechanism conditions fail. Engine
+  `stop_loss_pct` is a small safety net (~0.02-0.05) that rarely fires.
+  Worked example: eth_exhibits_institutional_momentum_over_weekly_ho_v1
+  (RSI/momentum/zscore + binary trend gate; gate closes → signal=0).
+
+- **Pattern B (signal owns ALL exits, engine stops sentinel-wide):** strategies
+  with explicit bar-level exit logic — ATR-scaled stops, range re-entry,
+  trailing extremes. The engine's pct stops would PRE-EMPT your bar-level
+  exits, generating 10×-100× more trades than expected. To avoid this:
+    1. signal_combiner does ALL exit logic with a stateful loop. Track entry
+       price / init stop / trailing extreme / exit conditions. Set signal=0
+       when the strategy WOULD have exited.
+    2. Use CONSTANT magnitude while in position (e.g. always +0.5). NEVER
+       multiply by per-bar `vol_scale` while held — that creates per-bar
+       position resizing the engine treats as new trades.
+    3. Set engine stops sentinel-wide: `stop_loss_pct=0.30, trailing_stop_pct=0.30`.
+  Worked example: volatility_compression_atrclose_and_40-bar_high-lo_v1's
+  signal_combiner with state machine (in_long/in_short, init_stop, trailing,
+  range re-entry exit) and constant ±0.5 signal magnitude.
+
+Decision rule: does the seed describe explicit exit conditions distinct from
+entry conditions? YES → Pattern B. NO → Pattern A. Document your choice in
+features.py docstring; the code judge will check that signal_combiner matches
+the chosen pattern.
 """
 
         user_prompt = f"""## Family

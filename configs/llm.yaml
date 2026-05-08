@@ -14,7 +14,7 @@ tiers:
     model: deepseek-v4-pro
   light:
     provider: dgx_spark
-    model: gemma-4-31B-nvfp4
+    model: gemma-4-31B-it
 
 # Role routing:
 #   heavy = DeepSeek-V4-Pro (official API) — critical paths: code gen + safety-critical judges.

@@ -55,7 +55,8 @@ CANDIDATES = {
         "api_key": SILICONFLOW_KEY,
     },
     "gemma4-31b-local": {
-        "model": "gemma-4-31B-nvfp4",
+        # bf16 + MTP deploy (was nvfp4 in earlier runs).
+        "model": "gemma-4-31B-it",
         "base_url": "http://192.168.3.46:8000/v1",
         "api_key": DGX_SPARK_KEY,
     },
