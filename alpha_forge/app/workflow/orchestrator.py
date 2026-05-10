@@ -16,6 +16,10 @@ from alpha_forge.app.storage.artifact_store import ArtifactStore
 from alpha_forge.app.storage.markdown_store import MarkdownStore
 from alpha_forge.app.workflow.family_flow import BudgetExhaustedError, FamilyFlow
 from alpha_forge.engine.holdout_runner import run_holdout
+from alpha_forge.engine.paper_runner import (
+    PaperResult,
+    run_paper_forward as default_run_paper_forward,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,7 @@ class Orchestrator:
         client: LLMClient | None = None,
         max_iterations: int = MAX_ITERATIONS,
         bus=None,  # EventBus | None
+        paper_forward_runner=None,  # Callable for tests; defaults to paper_runner.run_paper_forward
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
@@ -64,6 +69,7 @@ class Orchestrator:
         self.bus = bus
         self.flow = FamilyFlow(store, artifact_store, configs_dir, self.client, bus=bus)
         self._paused = False
+        self._run_paper_forward_fn = paper_forward_runner or default_run_paper_forward
 
     def pause(self) -> None:
         """Request loop pause at next iteration boundary."""
@@ -120,18 +126,10 @@ class Orchestrator:
                 continue
 
             if family.state == FamilyState.PROMOTE_TO_PAPER:
-                logger.info("Paper-forward stage: awaiting manual confirmation")
-                # Stub: transition to HUMAN_REVIEW
-                from alpha_forge.app.domain.events import FamilyEvent
-                from alpha_forge.app.workflow.transitions import TransitionEngine
-                engine = TransitionEngine()
-                tr = engine.apply(family, FamilyEvent.PROMOTE_PAPER)
-                family = tr.family
-                # Immediately mark as passed (stub)
-                tr = engine.apply(family, FamilyEvent.PAPER_PASSED)
-                family = tr.family
-                self.store.write_family(family)
-                results.append({"step": "paper_forward", "status": "stub_passed"})
+                logger.info("Running paper-forward for family %s", family_id)
+                result = self._run_paper_forward(family_id)
+                results.append(result)
+                iterations_run += 1
                 continue
 
             # Mid-iteration states from a crashed/aborted run — reset to QUEUED
@@ -232,3 +230,142 @@ class Orchestrator:
             self.store.write_family(family)
             self.store.append_history(family_id, f"Holdout failed. Score: {score.total:.3f}")
             return {"step": "holdout", "status": "failed", "score": score.total}
+
+    def _run_paper_forward(self, family_id: str) -> dict[str, Any]:
+        """Execute paper-forward sim via alpha-trader subprocess and apply
+        PAPER_PASSED / PAPER_FAILED transition based on the verdict.
+
+        Idempotent: if the family already has a paper_forward_result.json,
+        the verdict is replayed without re-running the trader. Mirrors
+        ``_run_holdout`` in shape.
+        """
+        from datetime import datetime, timezone
+
+        import yaml
+
+        from alpha_forge.app.domain.events import FamilyEvent
+        from alpha_forge.app.workflow.transitions import TransitionEngine
+
+        engine = TransitionEngine()
+        family = self.store.read_family(family_id)
+
+        # Idempotency: replay verdict from persisted artifact.
+        existing = self.artifact_store.load_paper_forward_result(family_id)
+        if existing is not None:
+            logger.info(
+                "Paper-forward verdict already exists for %s (verdict=%s); "
+                "re-applying transition",
+                family_id, existing.get("verdict"),
+            )
+            # Family may already be in PAPER_FORWARD_RUNNING from a prior
+            # crash mid-handoff. Move it forward via the recorded verdict.
+            if family.state == FamilyState.PROMOTE_TO_PAPER:
+                family = engine.apply(family, FamilyEvent.PROMOTE_PAPER).family
+                self.store.write_family(family)
+            return self._apply_paper_verdict(family_id, existing)
+
+        # 1. Transition to PAPER_FORWARD_RUNNING
+        family = engine.apply(family, FamilyEvent.PROMOTE_PAPER).family
+        self.store.write_family(family)
+
+        # 2. Export bundle
+        bundle_path = self._export_bundle_for(family_id)
+
+        # 3. Determine paper window: holdout_end → now
+        with open(self.configs_dir / "splits.yaml") as f:
+            splits = yaml.safe_load(f)
+        holdout_end_str = splits["holdout"]["end"]
+        holdout_end = datetime.fromisoformat(
+            holdout_end_str if "T" in holdout_end_str else holdout_end_str + "T00:00:00+00:00"
+        )
+        if holdout_end.tzinfo is None:
+            holdout_end = holdout_end.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if now <= holdout_end:
+            # Operator started paper-forward before any post-holdout data
+            # exists. Save a synthetic FAIL so subsequent runs can detect.
+            payload = {
+                "schema_version": 1,
+                "verdict": "FAIL",
+                "reasons": ["empty_paper_window"],
+                "metrics": {},
+                "synthetic": True,
+            }
+            self.artifact_store.save_paper_forward_result(family_id, payload)
+            return self._apply_paper_verdict(family_id, payload)
+
+        # 4. Per-run output dir
+        output_dir = self.artifact_store.paper_forward_run_dir(family_id)
+
+        # 5. Resolve universe + timeframe from bundle's manifest
+        import json as _json
+        with open(bundle_path / "manifest.json") as f:
+            manifest = _json.load(f)
+        universe = manifest["universe"]
+        timeframe = manifest["timeframe"]
+
+        # 6. Run the trader
+        result: PaperResult = self._run_paper_forward_fn(
+            family_id=family_id,
+            bundle_path=bundle_path,
+            output_dir=output_dir,
+            paper_window=(holdout_end, now),
+            universe=universe,
+            timeframe=timeframe,
+        )
+
+        # 7. Persist verdict + transition
+        self.artifact_store.save_paper_forward_result(family_id, result.raw)
+        return self._apply_paper_verdict(family_id, result.raw)
+
+    def _apply_paper_verdict(
+        self, family_id: str, result_json: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Translate the trader's verdict into a state transition."""
+        from alpha_forge.app.domain.events import FamilyEvent
+        from alpha_forge.app.workflow.transitions import TransitionEngine
+
+        engine = TransitionEngine()
+        family = self.store.read_family(family_id)
+        verdict = result_json.get("verdict", "FAIL")
+        event = (
+            FamilyEvent.PAPER_PASSED if verdict == "PASS"
+            else FamilyEvent.PAPER_FAILED
+        )
+        family = engine.apply(family, event).family
+        self.store.write_family(family)
+        reasons = result_json.get("reasons") or []
+        self.store.append_history(
+            family_id,
+            f"Paper forward {verdict}: "
+            f"{', '.join(reasons) if reasons else 'all auto-promote checks passed'}",
+        )
+        return {"step": "paper_forward", "status": verdict.lower(),
+                "verdict": verdict, "reasons": list(reasons),
+                "metrics": dict(result_json.get("metrics", {}))}
+
+    def _export_bundle_for(self, family_id: str) -> Path:
+        """Build a strategy bundle for ``family_id`` by reusing the existing
+        ``scripts/export_strategy.py`` helpers (they are pure callables, no
+        alpha_trader.* imports inside)."""
+        # Repo root = parent of alpha_forge package
+        from alpha_forge.app.workflow import orchestrator as _self_mod
+        repo_root = Path(_self_mod.__file__).resolve().parents[3]
+        # Make scripts/ importable
+        import sys
+        scripts_dir = repo_root / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from export_strategy import (  # type: ignore[import-not-found]
+            build_bundle, load_family,
+        )
+        workspace = self.store.root
+        family_dir, family_meta = load_family(workspace, family_id)
+        bundles_dir = workspace / "bundles"
+        bundles_dir.mkdir(parents=True, exist_ok=True)
+        return build_bundle(
+            family_id=family_id,
+            family_dir=family_dir,
+            family_meta=family_meta,
+            output_dir=bundles_dir,
+        )

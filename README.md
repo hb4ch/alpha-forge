@@ -10,13 +10,13 @@
 
 ---
 
-Alpha Forge is an autonomous research system that discovers, validates, and hardens crypto trading strategies through an adversarially-reviewed, mutation-bounded pipeline. Every idea is coached by 7 specialized LLM judges, 5 deterministic guards, and a robustness battery before it can graduate. Judges never reject -- they coach. Families iterate until they succeed or exhaust their iteration budget. All state lives in Markdown + YAML files. No database. No black boxes.
+Alpha Forge is an autonomous research system that discovers, validates, and hardens crypto trading strategies. Every idea is coached by specialized LLM judges, checked by deterministic guards, and stress-tested through a robustness battery before it can graduate. Judges never reject — they coach. Families iterate until they succeed or exhaust their budget. All state lives in Markdown + YAML files. No database. No black boxes.
 
 ## TUI Dashboard
 
 ![Alpha Forge TUI](docs/tui-screenshot.png)
 
-The Textual-based TUI provides a real-time cockpit view of the research loop: live LLM token streaming, judge verdicts with color-coded severity, pipeline stage tracking, guard results, and autopilot/semi-auto mode toggle. Launch with:
+A Textual-based terminal UI provides a real-time cockpit: live LLM token streaming, judge verdicts with color-coded severity, pipeline stage tracking, guard results, and autopilot/semi-auto mode toggle.
 
 ```bash
 python scripts/run_tui.py --workspace alpha_research
@@ -26,9 +26,9 @@ python scripts/run_tui.py --workspace alpha_research
 
 Manual quant research suffers from three failure modes:
 
-1. **Unconstrained search** - researchers keep tweaking until something "works"
-2. **Overfitting** - results look great on training data, die on holdout
-3. **No audit trail** - impossible to trace how a strategy evolved
+1. **Unconstrained search** — researchers keep tweaking until something "works"
+2. **Overfitting** — results look great on training data, die on holdout
+3. **No audit trail** — impossible to trace how a strategy evolved
 
 Alpha Forge addresses all three by treating alpha research as a **controlled experiment** with hard boundaries on what can change, coaching review at every stage, and a complete paper trail in human-readable files.
 
@@ -91,254 +91,100 @@ flowchart TD
   <img src="pipeline-illustration.png" alt="Adversarial Judge Pipeline" width="600">
 </p>
 
-## Family Lifecycle -- State Machine
-
-Every research family moves through a deterministic state machine. Invalid transitions are rejected. The only terminal conditions are: qualified promotion through holdout, budget exhaustion (configurable, default 20 iterations), or holdout/paper failure. Judges never reject -- they coach via `revise` verdicts with actionable feedback. Guards route failures back to code revision for automatic repair.
-
-```mermaid
-stateDiagram-v2
-    [*] --> NEW
-    NEW --> QUEUED : FAMILY_CREATED
-
-    QUEUED --> PLAN_IN_REVIEW : PLAN_SUBMITTED
-
-    PLAN_IN_REVIEW --> PLAN_APPROVED : PLAN_APPROVED
-    PLAN_IN_REVIEW --> PLAN_REVISION_REQUIRED : PLAN_REVISION_REQUIRED
-
-    PLAN_REVISION_REQUIRED --> PLAN_IN_REVIEW : PLAN_SUBMITTED
-
-    PLAN_APPROVED --> CODE_IN_REVIEW : CODE_SUBMITTED
-    CODING --> CODE_IN_REVIEW : CODE_SUBMITTED
-
-    CODE_IN_REVIEW --> CODE_APPROVED : CODE_APPROVED
-    CODE_IN_REVIEW --> CODE_REVISION_REQUIRED : CODE_REVISION_REQUIRED
-
-    CODE_REVISION_REQUIRED --> CODE_IN_REVIEW : CODE_SUBMITTED
-
-    CODE_APPROVED --> BACKTEST_RUNNING : GUARDS_PASSED
-    CODE_APPROVED --> CODE_REVISION_REQUIRED : GUARDS_FAILED
-    GUARDS_RUNNING --> BACKTEST_RUNNING : GUARDS_PASSED
-    GUARDS_RUNNING --> CODE_REVISION_REQUIRED : GUARDS_FAILED
-
-    BACKTEST_RUNNING --> RESULTS_IN_REVIEW : BACKTEST_COMPLETED
-    BACKTEST_RUNNING --> CODE_REVISION_REQUIRED : BACKTEST_FAILED
-
-    RESULTS_IN_REVIEW --> PROMOTE_TO_HOLDOUT : RESULT_APPROVED
-    RESULTS_IN_REVIEW --> ITERATE : ITERATE
-
-    ITERATE --> PLAN_IN_REVIEW : PLAN_SUBMITTED
-    ITERATE --> BUDGET_EXHAUSTED : BUDGET_EXHAUSTED
-
-    PROMOTE_TO_HOLDOUT --> HOLDOUT_RUNNING : PROMOTE_HOLDOUT
-    HOLDOUT_RUNNING --> PROMOTE_TO_PAPER : HOLDOUT_PASSED
-    HOLDOUT_RUNNING --> ARCHIVED_REJECTED : HOLDOUT_FAILED
-
-    PROMOTE_TO_PAPER --> PAPER_FORWARD_RUNNING : PROMOTE_PAPER
-    PAPER_FORWARD_RUNNING --> HUMAN_REVIEW : PAPER_PASSED
-    PAPER_FORWARD_RUNNING --> ARCHIVED_REJECTED : PAPER_FAILED
-
-    HUMAN_REVIEW --> DONE : HUMAN_APPROVED
-    HUMAN_REVIEW --> ARCHIVED_REJECTED : HUMAN_REJECTED
-
-    BUDGET_EXHAUSTED --> [*]
-    ARCHIVED_REJECTED --> [*]
-    DONE --> [*]
-```
-
 ## Coaching Judge Pipeline
 
-Seven LLM judges organized in three tiers, running concurrently within each tier via `ThreadPoolExecutor`. Each judge produces structured JSON output. Judges act as **coaches, not gatekeepers** -- they return `approve`, `approve_with_constraints`, or `revise` with specific, actionable `must_fix` guidance:
+Seven LLM judges organized in three tiers run concurrently via `ThreadPoolExecutor`. Judges act as **coaches, not gatekeepers** — they return `approve`, `approve_with_constraints`, or `revise` with specific, actionable `must_fix` feedback.
 
-```mermaid
-graph LR
-    subgraph "Tier 1 -- Plan Review"
-        LJ1[Leakage Judge]
-        OJ1[Overfit Judge]
-        RJ1[Realism Judge]
-    end
+| Tier | Judges | Reviews |
+|------|--------|---------|
+| **Tier 1 — Plan** | Leakage, Overfit, Realism | Research plan before any code is written |
+| **Tier 2 — Code** | Leakage, Code Smell | Implementation for data leaks, complexity, edit surface violations |
+| **Tier 3 — Results** | Result, Overfit, Realism | Backtest metrics for overfitting, fragility, concentration |
 
-    subgraph "Tier 2 -- Code Review"
-        LJ2[Leakage Judge]
-        CJ[Code Smell Judge]
-    end
+| Judge | Focus |
+|-------|-------|
+| **Seed Judge** | Testability, mechanism coherence, duplication risk |
+| **Leakage Judge** | Time leakage, label leakage, split contamination, lookahead |
+| **Overfit Judge** | Result-chasing, hidden sweeps, degrees of freedom, family drift |
+| **Realism Judge** | Fee realism, turnover, liquidity, slippage, latency |
+| **Code Smell Judge** | Hidden state, complexity creep, edit surface violations |
+| **Result Judge** | Concentration, fragility, stability, promotion worthiness |
+| **Mutation Judge** | Mechanism preservation, search abuse, budget discipline |
 
-    subgraph "Tier 3 -- Result Review"
-        RSJ[Result Judge]
-        OJ2[Overfit Judge]
-        RJ2[Realism Judge]
-    end
+## Iteration Model
 
-    Plan --> LJ1 & OJ1 & RJ1
-    Code --> LJ2 & CJ
-    Results --> RSJ & OJ2 & RJ2
-
-    LJ1 & OJ1 & RJ1 --> V1{Aggregate}
-    LJ2 & CJ --> V2{Aggregate}
-    RSJ & OJ2 & RJ2 --> V3{Aggregate}
-```
-
-| Judge | Focus | Risk Fields |
-|-------|-------|-------------|
-| **Seed Judge** | Screen raw ideas for testability, mechanism coherence, duplication | `testability`, `mechanism_coherence`, `data_availability`, `scope_discipline`, `duplication_risk`, `overfit_bait_risk` |
-| **Leakage Judge** | Time leakage, label leakage, split contamination, join safety | `leakage_risk`, `time_leakage_risk`, `label_leakage_risk`, `split_contamination_risk`, `join_leakage_risk`, `cache_contamination_risk` |
-| **Overfit Judge** | Result-chasing, hidden sweeps, degrees of freedom, family drift | `overfit_risk`, `search_abuse_risk`, `degrees_of_freedom_risk`, `family_drift_risk`, `mechanism_discipline` |
-| **Realism Judge** | Fee realism, turnover, liquidity, slippage, latency | `realism_risk`, `cost_risk`, `slippage_risk`, `turnover_risk`, `liquidity_risk`, `latency_risk` |
-| **Code Smell Judge** | Hidden state, complexity creep, edit surface violations, traceability | `code_risk`, `complexity_risk`, `statefulness_risk`, `edit_surface_violation_risk`, `traceability_risk` |
-| **Result Judge** | Concentration, fragility, stability, promotion worthiness | `result_quality`, `stability`, `concentration_risk`, `cost_fragility_risk`, `perturbation_fragility_risk` |
-| **Mutation Judge** | Mechanism preservation, search abuse, budget discipline | `mechanism_coherence`, `search_abuse_risk`, `degrees_of_freedom_risk`, `family_preservation_confidence`, `budget_status` |
-
-All risk fields use `low` / `medium` / `high` / `critical` levels. Verdicts: `approve`, `approve_with_constraints`, `revise`. Every `revise` must include actionable coaching in `must_fix` (what's wrong, why it matters, what to do instead).
-
-## Iteration Budget & Coaching Model
-
-Alpha Forge uses a **coaching-first, budget-bounded** approach instead of punitive strikes:
-
-- **No strikes, no rejections** -- judges return `approve` or `revise` with specific coaching feedback
-- **Iteration budget** -- each family gets up to 20 iterations (configurable via `max_iterations`). Budget exhaustion is the only "death" condition besides holdout/paper failure
-- **Two-track scoring** -- `best_score` tracks any improvement (unconditional); `best_qualified_score` gates holdout promotion (requires robustness)
-- **Researcher autonomy** -- after each iteration, the researcher LLM chooses the next mode:
-  - `replan` -- fundamentally rethink the approach (full plan + code cycle)
-  - `revise_code` -- the approach is sound, fix specific code issues
-  - `adjust_config` -- only tweak `model_config.py` parameters
-- **Rollback on severe degradation** -- code is rolled back to the last checkpoint only if the score drops below 80% of the best score
-- **Judges evaluate the current work, not family biography** -- no iteration count, no failure history poisoning. Only a windowed score trajectory is shown
-- **Guards are the only hard stops** -- deterministic checks for objective violations (edit surface, data leakage) route back to code revision, never to archival
-
-## Prompt Flow
-
-Prompt assembly is phase-specific. Researcher phases use inline `system` + `user` prompts, while judge phases load markdown system prompts from `judges/prompts/*.md` and pair them with workflow-assembled context. Judge model/provider selection is per-role via `configs/llm.yaml`; the researcher uses the `researcher` role.
-
-```mermaid
-flowchart TD
-    A[Raw Seed] --> B[Distill Seed]
-    B --> B1[System: inline seed-card schema]
-    B --> B2[User: source, raw text, seed_id]
-    B --> C[Seed Judge]
-    C --> C1[System: judges/prompts/seed_judge.md]
-    C --> C2[User: SeedCard JSON, existing families]
-
-    C --> D[FamilyFlow.run_iteration]
-
-    D --> E[Draft Plan]
-    E --> E1[Role client: researcher]
-    E --> E2[System: inline planning instructions]
-    E --> E3[User: family, accepted seed, prior feedback, hard constraints]
-
-    E --> F[Tier-1 Plan Review]
-    F --> F1[Leakage Judge]
-    F --> F2[Overfit Judge]
-    F --> F3[Realism Judge]
-    F1 --> F4[System: prompt file + User: plan, history, optional code/diff]
-    F2 --> F5[System: prompt file + User: plan, history]
-    F3 --> F6[System: prompt file + User: plan, costs config]
-
-    F --> G[Write Code]
-    G --> G1[Role client: researcher]
-    G --> G2[System: inline JSON file contract]
-    G --> G3[User: family, plan, prior feedback, iteration mode]
-    G --> G4[Revision only: existing research files, allowed files, revise-in-place guidance]
-
-    G --> H[Tier-2 Code Review]
-    H --> H1[Leakage Judge]
-    H --> H2[Code Judge]
-    H1 --> H3[System: prompt file + User: plan, full code, diff, history]
-    H2 --> H4[System: prompt file + User: plan, full code, diff, changed_files, allowed_files, forbidden_files]
-
-    H --> I[Guards / Backtest / Robustness]
-
-    I --> J[Tier-3 Result Review]
-    J --> J1[Result Judge]
-    J --> J2[Overfit Judge]
-    J --> J3[Realism Judge]
-    J1 --> J4[System: prompt file + User: metrics, robustness, history, prior_best]
-    J2 --> J5[System: prompt file + User: metrics, history]
-    J3 --> J6[System: prompt file + User: metrics, costs config]
-
-    J --> K[Researcher Mode Selection]
-    K --> K1[System: inline mode-selection prompt]
-    K --> K2[User: judge feedback, family context, best score]
-```
-
-| Phase | System Prompt Source | User Context Assembled |
-|-------|----------------------|------------------------|
-| Seed distillation | Inline in `seed_flow.py` | Raw seed source, raw text, `seed_id` |
-| Seed screening | `judges/prompts/seed_judge.md` | Distilled `SeedCard`, existing family IDs |
-| Draft plan | Inline in `researcher.py` | Family metadata, accepted seed fields, prior feedback, edit/data constraints |
-| Tier-1 plan review | Judge markdown prompt files | Plan, history, costs config |
-| Write code | Inline in `researcher.py` | Family metadata, approved plan, prior feedback, iteration mode, existing code on revision paths |
-| Tier-2 code review | Judge markdown prompt files | Plan, full code bundle, unified diff, history, changed files, allowed files, forbidden files |
-| Tier-3 result review | Judge markdown prompt files | Metrics, robustness results, history, costs config, prior best score |
-| Mode selection | Inline in `researcher.py` | Judge feedback, family context, best score |
-
-Code references:
-- `alpha_forge/app/workflow/seed_flow.py`
-- `alpha_forge/app/workflow/family_flow.py`
-- `alpha_forge/app/agents/researcher.py`
-- `alpha_forge/app/agents/judge_router.py`
-- `alpha_forge/app/agents/base_judge.py`
+- **No strikes, no rejections** — judges coach via `revise` verdicts with actionable feedback
+- **Iteration budget** — each family gets up to 20 iterations (configurable). Budget exhaustion is the only iteration-based terminal condition
+- **Researcher autonomy** — after each iteration, the researcher LLM chooses: `replan`, `revise_code`, or `adjust_config`
+- **Rollback on severe degradation** — code rolls back to last checkpoint only if score drops below 80% of best
+- **Clean history** — judges see only a windowed score trajectory, not accumulated failure history
 
 ## Deterministic Guards
 
-Five hard guards run before every backtest. No LLM -- pure code checks. Guard failures route back to `CODE_REVISION_REQUIRED` for automatic repair:
+Five hard guards (pure code, no LLM) run before every backtest. Failures route back to code revision for automatic repair:
 
-| Guard | What it Checks | Severity |
-|-------|---------------|----------|
-| **Edit Surface** | Only `research/*.py` files were modified; forbidden files untouched | Critical |
-| **Time Integrity** | No forward-looking operations (`shift(-N)` with N>0), no future data in features | High |
-| **Split Isolation** | Holdout data not accessed before promotion; splits immutable | High |
-| **Config Guard** | SHA-256 hashes of `costs.yaml`, `splits.yaml`, `guardrails.yaml` unchanged | High |
-| **Reproducibility** | Logs commit hash, config hashes, dataset version for audit trail | Informational |
+| Guard | What it Checks |
+|-------|---------------|
+| **Edit Surface** | Only `research/*.py` files modified; forbidden files untouched |
+| **Time Integrity** | No forward-looking operations, no future data in features |
+| **Split Isolation** | Holdout data not accessed before promotion; splits immutable |
+| **Config Guard** | SHA-256 hashes of config files unchanged |
+| **Reproducibility** | Commit hash, config hashes, dataset version logged |
 
-## Mutation Budget System
+## Robustness Battery
 
-Each family gets a finite budget for modifications. This prevents unconstrained search:
-
-| Category | Budget | Description |
-|----------|--------|-------------|
-| `horizon` | 2 | Timeframe changes within a bounded set |
-| `venue` | 2 | Cross-exchange portability testing |
-| `representation` | 1 | Feature engineering changes |
-| `combination` | 1 | Signal combination changes |
-| `regime` | 1 | Regime filter additions |
-| `structural` | 0 | Always requires a **fork** to a child family |
+Five stress tests after every backtest: cost perturbation (2x/3x fees), slippage perturbation (2x/3x), sub-period stability (3 windows), leave-one-asset-out, and shuffle placebo (randomized signal timing).
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.11+
-- [crypto-pegasus](https://github.com/your-org/crypto-pegasus) backtest engine (sibling directory)
-- LLM provider API keys configured in `configs/llm.yaml` (supports Anthropic, OpenAI-compatible endpoints)
-
-### Setup
+**Prerequisites:** Python 3.12+, [crypto-pegasus](https://github.com/your-org/crypto-pegasus) backtest engine (sibling directory), LLM provider API keys.
 
 ```bash
-# Clone
 git clone https://github.com/your-org/alpha-forge.git
 cd alpha-forge
 
-# Install alpha-forge
-pip install -e .
+# Install dependencies (uses uv)
+uv sync
 
-# Install crypto-pegasus (backtest engine)
+# Install crypto-pegasus backtest engine
 pip install -e ../crypto-pegasus
 
-# Configure LLM providers -- add API keys to .env (git-ignored)
-cp .env.example .env  # then edit with your keys
-# configs/llm.yaml references keys via api_key_env (e.g. BIGMODEL_API_KEY)
+# Configure LLM providers
+cp .env.example .env   # add your API keys
 ```
 
-## Usage
-
-### 1. Initialize Workspace
-
-Creates the `alpha_research/` directory tree with global state files and auto-detects data splits from available market data:
+## Quick Start
 
 ```bash
+# 1. Initialize workspace
 python scripts/init_workspace.py --workspace alpha_research --configs configs --auto-splits
+
+# 2. Ingest a seed idea
+python scripts/intake_seed.py \
+  --text "Funding rate mean-reversion on perpetual futures shows a 3-5 day half-life" \
+  --source "Academic paper: Perpetual Futures Microstructure" \
+  --workspace alpha_research \
+  --auto-create
+
+# 3. Run the research loop
+python scripts/run_loop.py \
+  --family fam_001 \
+  --workspace alpha_research \
+  --configs configs \
+  --max-iterations 20
 ```
 
-This creates:
+### Other commands
+
+```bash
+python scripts/run_iteration.py --family fam_001 --workspace alpha_research --configs configs
+python scripts/run_guards.py --family fam_001 --workspace alpha_research
+python scripts/run_backtest.py --family fam_001 --workspace alpha_research --split validation
+python scripts/run_holdout.py --family fam_001 --workspace alpha_research
+python scripts/run_tui.py --workspace alpha_research
+```
+
+## Workspace Layout
 
 ```
 alpha_research/
@@ -346,174 +192,46 @@ alpha_research/
 ├── IDEAS.md              # Seed ideas index
 ├── inbox/                # Raw seeds
 ├── seeds/                # Distilled seed cards
-│   ├── pending/
-│   ├── accepted/
-│   └── rejected/
-├── families/             # One directory per family
+│   ├── pending/          ├── accepted/          └── rejected/
+├── families/
 │   └── <family_id>/
 │       ├── FAMILY.md     # Family state + metadata
 │       ├── HISTORY.md    # Append-only iteration log
 │       ├── research/     # The 4 editable files
 │       ├── iterations/   # Per-iteration state
 │       ├── artifacts/    # JSON backtest/robustness results
-│       └── ledger/       # Per-iteration verdicts
-└── reports/              # Generated reports
+│       └── ledger/       # Per-iteration judge verdicts
+└── reports/
 ```
 
-### 2. Ingest a Seed Idea
+## Research Files
 
-Feed a raw research claim from a paper, tweet, or observation:
+Each family gets 4 editable files under `research/`. These are the **only** files the system may modify:
 
-```bash
-python scripts/intake_seed.py \
-  --text "Funding rate mean-reversion on perpetual futures shows a 3-5 day half-life" \
-  --source "Academic paper: Perpetual Futures Microstructure" \
-  --workspace alpha_research \
-  --auto-create
-```
-
-This will:
-1. Save the raw seed to `inbox/`
-2. Distill it into a structured `SeedCard` via LLM
-3. Screen it with the Seed Judge (accept / reject / narrow / merge)
-4. If accepted and `--auto-create` is set, create a new family
-
-### 3. Run a Single Iteration
-
-Drive one family through the full pipeline (plan -> judge -> code -> judge -> guards -> backtest -> robustness -> judge -> score):
-
-```bash
-python scripts/run_iteration.py --family fam_001 --workspace alpha_research --configs configs
-```
-
-### 4. Run the Full Loop
-
-Let the orchestrator drive a family through multiple iterations until it reaches a terminal or waiting state:
-
-```bash
-python scripts/run_loop.py \
-  --family fam_001 \
-  --workspace alpha_research \
-  --configs configs \
-  --max-iterations 20 \
-  --verbose
-```
-
-### 5. Manual Operations
-
-```bash
-# Run guards independently
-python scripts/run_guards.py --family fam_001 --workspace alpha_research
-
-# Run a standalone backtest
-python scripts/run_backtest.py --family fam_001 --workspace alpha_research --split validation
-
-# Run holdout evaluation (after promotion)
-python scripts/run_holdout.py --family fam_001 --workspace alpha_research
-
-# Manually apply a state transition
-python scripts/update_state.py --family fam_001 --event HUMAN_APPROVED --workspace alpha_research
-```
-
-## Research File Contracts
-
-Each family gets 4 editable Python files in `research/`. These are the **only** files the system is allowed to modify:
-
-| File | Required Export | Signature |
-|------|----------------|-----------|
+| File | Export | Signature |
+|------|--------|-----------|
 | `features.py` | `compute_features` | `(bars: pd.DataFrame) -> pd.DataFrame` |
 | `labels.py` | `compute_labels` | `(bars: pd.DataFrame) -> pd.Series` |
 | `model_config.py` | `MODEL_CONFIG` | `dict` |
 | `signal_combiner.py` | `combine_signals` | `(features: pd.DataFrame, config: dict) -> pd.Series` |
 
-**Signal contract**: Values between `-1.0` and `1.0`. Fractional values represent exposure fraction (e.g. `0.5` = 50% long). `0.0` = flat, `NaN` = warmup/no signal.
+Signal values range from `-1.0` (full short) to `1.0` (full long), with `0.0` = flat and `NaN` = warmup. Risk management (stop-loss, take-profit, trailing stop) is handled by the crypto-pegasus engine. Available bar columns: `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`.
 
-**MODEL_CONFIG keys**:
-- `"timeframe"` -- **required**, must match seed horizon (e.g. `"1h"`)
-- `"stop_loss_pct"` -- engine-level stop-loss (e.g. `0.02` = 2%)
-- `"take_profit_pct"` -- engine-level take-profit (e.g. `0.05` = 5%)
-- `"trailing_stop_pct"` -- engine-level trailing stop (e.g. `0.03` = 3%)
-
-Risk management is handled by the crypto-pegasus engine (intra-bar high/low checks, Numba JIT). Strategy code should **not** implement its own stop logic.
-
-**Available bar columns**: `open`, `high`, `low`, `close`, `volume`, `buy_volume`, `vwap`, `trade_count`
-
-**Rules**:
-- No forward-looking operations (`shift(-N)` with N > 0)
-- No external data sources or database access
-- Only `pandas` and `numpy` for computations
-
-## Composite Scoring
-
-Strategies are scored across multiple dimensions:
-
-```
-total = alpha_quality + stability_bonus
-      - turnover_penalty - drawdown_penalty
-      - concentration_penalty - fragility_penalty
-```
-
-| Component | Formula |
-|-----------|---------|
-| `alpha_quality` | `0.5 * avg_sharpe + 0.3 * avg_sortino + 0.2 * avg_return` |
-| `stability_bonus` | `max(0, 0.2 - sharpe_variance)` |
-| `turnover_penalty` | `max(0, (avg_trades - 500) / 500 * 0.1)` |
-| `drawdown_penalty` | `max(0, (avg_drawdown - 0.3) / 0.3 * 0.2)` |
-| `concentration_penalty` | `max(0, (max_return_share - 0.5) * 0.2)` |
-| `fragility_penalty` | `robustness_fail_rate * 0.3` |
-
-**Two-track scoring**:
-- `best_score` -- tracks any improvement unconditionally. Any score that beats the prior best is saved as a checkpoint.
-- `best_qualified_score` -- gates holdout promotion. Requires score exceeds prior best by `0.05`, core robustness tests pass, and overall robustness pass rate meets threshold.
-
-## Robustness Battery
-
-Five stress tests run after every backtest:
-
-| Test | What it Does |
-|------|-------------|
-| **Cost perturbation** | Re-run with 2x and 3x fee rates |
-| **Slippage perturbation** | Re-run with 2x and 3x slippage |
-| **Sub-period stability** | Split validation into 3 windows, check consistency |
-| **Leave-one-asset-out** | Remove each symbol, check edge survives |
-| **Shuffle placebo** | Randomize signal timing, verify alpha disappears |
+See [CLAUDE.md](CLAUDE.md) for detailed contracts, engine integration patterns, and alternative data source docs.
 
 ## Configuration
 
-### `configs/universe.yaml`
+All configs live in `configs/`:
 
-```yaml
-symbols:
-  - ETHUSDT
-  - BTCUSDT
-  - SOLUSDT
-  - BNBUSDT
-default_timeframe: "5min"
-```
+| File | Purpose |
+|------|---------|
+| `llm.yaml` | LLM provider definitions, tier routing, per-role model selection |
+| `universe.yaml` | Tradable symbols and default timeframe |
+| `costs.yaml` | Fee rates, slippage, initial capital |
+| `splits.yaml` | Train/validation/holdout date ranges |
+| `guardrails.yaml` | Minimum thresholds, cost/slippage multipliers, iteration budget |
 
-### `configs/costs.yaml`
-
-```yaml
-fee_rate: 0.001          # 10 bps per side (taker)
-slippage_bps: 5.0        # 5 bps slippage estimate
-initial_capital: 100000.0
-```
-
-### `configs/guardrails.yaml`
-
-```yaml
-min_sharpe: 0.5
-min_profit_factor: 1.2
-max_drawdown: 0.30
-min_win_rate: 0.35
-min_total_trades: 30
-max_concentration_share: 0.60
-cost_multiplier_tests: [2.0, 3.0]
-slippage_multiplier_tests: [2.0, 3.0]
-min_robustness_pass_rate: 0.7
-qualified_improvement_threshold: 0.05
-max_iterations: 20
-```
+API keys are read from environment variables (configured via `.env`); `llm.yaml` references them by name via `api_key_env`.
 
 ## Project Structure
 
@@ -522,65 +240,27 @@ alpha-forge/
 ├── alpha_forge/
 │   ├── app/
 │   │   ├── agents/          # LLM judges + researcher agent
-│   │   │   ├── base_judge.py
-│   │   │   ├── judge_seed.py
-│   │   │   ├── judge_leakage.py
-│   │   │   ├── judge_overfit.py
-│   │   │   ├── judge_realism.py
-│   │   │   ├── judge_code.py
-│   │   │   ├── judge_result.py
-│   │   │   ├── judge_mutation.py
-│   │   │   ├── judge_router.py
-│   │   │   ├── researcher.py
-│   │   │   └── llm_client.py
-│   │   ├── domain/           # Enums, models, scoring, budget, mutation policy
-│   │   │   ├── states.py
-│   │   │   ├── events.py
-│   │   │   ├── models.py
-│   │   │   ├── scoring.py
-│   │   │   ├── strikes.py    # Budget exhaustion check (legacy name)
-│   │   │   └── mutation_policy.py
-│   │   ├── guards/           # Deterministic guard checks
-│   │   │   ├── check_edit_surface.py
-│   │   │   ├── timestamp_guard.py
-│   │   │   ├── split_guard.py
-│   │   │   ├── config_guard.py
-│   │   │   ├── reproducibility_guard.py
-│   │   │   └── runner.py
-│   │   ├── storage/          # File-based state persistence
-│   │   │   ├── markdown_store.py
-│   │   │   └── artifact_store.py
-│   │   └── workflow/         # Orchestration + state transitions
-│   │       ├── transitions.py
-│   │       ├── seed_flow.py
-│   │       ├── family_flow.py
-│   │       └── orchestrator.py
-│   ├── engine/               # crypto-pegasus bridge
-│   │   ├── research_strategy.py
-│   │   ├── backtest_runner.py
-│   │   ├── robustness_runner.py
-│   │   └── holdout_runner.py
-│   └── templates/research/   # Stub templates for new families
-├── configs/                  # Immutable configuration
-├── judges/prompts/           # Judge prompt templates (coaching-only)
-├── scripts/                  # CLI entry points
-└── CLAUDE.md                 # AI assistant instructions
+│   │   ├── domain/          # Enums, Pydantic models, scoring, mutation policy
+│   │   ├── guards/          # Deterministic guard checks
+│   │   ├── storage/         # File-based state persistence (Markdown + YAML)
+│   │   └── workflow/        # Orchestrator, seed flow, family flow, transitions
+│   ├── engine/              # crypto-pegasus bridge (backtest, robustness, holdout)
+│   └── templates/research/  # Stub templates for new families
+├── configs/                 # Immutable YAML configuration
+├── judges/prompts/          # Judge prompt templates
+├── scripts/                 # CLI entry points
+└── tests/                   # Unit tests
 ```
 
-## Key Design Principles
+## Design Principles
 
-- **File-native state** -- All state in Markdown + YAML + JSON. `git log` is the audit trail.
-- **Deterministic transitions** -- A static transition table governs all state changes. No implicit transitions.
-- **Locked edit surface** -- Only 4 research files can be modified. Everything else is immutable per-iteration.
-- **Coaching review** -- Every plan, implementation, and result is reviewed by multiple judges who coach with actionable feedback, never punitive rejection.
-- **Mutation budgets** -- Finite budget per mutation category prevents unconstrained parameter search.
-- **Separation of concerns** -- The researcher generates, judges coach, guards enforce, the orchestrator manages.
-- **Iteration budget** -- Families get N iterations (default 20) to succeed. No strikes, no premature death. Budget exhaustion is the only iteration-based terminal condition.
-- **Researcher autonomy** -- After each iteration, the researcher chooses the next mode (replan / revise code / adjust config) based on judge feedback.
-- **Two-track scoring** -- Any improvement is tracked and checkpointed; only qualified improvements (robust + significant) gate holdout promotion.
-- **Engine-level risk management** -- Stop-loss, take-profit, and trailing stops are handled by crypto-pegasus, not strategy code.
-- **Fractional position sizing** -- Signals express conviction as continuous values, not binary all-in bets.
-- **Clean history** -- Judges see only a windowed score trajectory, not accumulated failure history. No iteration count poisoning.
+- **File-native state** — All state in Markdown + YAML + JSON. `git log` is the audit trail.
+- **Coaching, not gatekeeping** — Judges provide actionable feedback. No punitive rejections.
+- **Locked edit surface** — Only 4 research files per family can be modified.
+- **Mutation budgets** — Finite budget per mutation category prevents unconstrained search.
+- **Deterministic transitions** — Static transition table governs all state changes.
+- **Engine-level risk management** — Stops handled by crypto-pegasus, not strategy code.
+- **Fractional positioning** — Signals express conviction as continuous values, not binary bets.
 
 ## License
 

@@ -124,6 +124,42 @@ class ArtifactStore:
         return self.load_json(path)
 
     # ------------------------------------------------------------------
+    # Paper-forward verdict (written by the orchestrator after the trader
+    # produces its result.json). Latest verdict only — per-run audit logs
+    # live in the timestamped subdirectory under paper_forward/.
+    # ------------------------------------------------------------------
+
+    def save_paper_forward_result(
+        self, family_id: str, result: dict[str, Any]
+    ) -> Path:
+        """Persist the latest PASS/FAIL verdict at the family root."""
+        path = self.root / "families" / family_id / "paper_forward_result.json"
+        self._atomic_write_json(path, result)
+        return path
+
+    def load_paper_forward_result(
+        self, family_id: str
+    ) -> dict[str, Any] | None:
+        path = self.root / "families" / family_id / "paper_forward_result.json"
+        if not path.exists():
+            return None
+        return self.load_json(path)
+
+    def paper_forward_run_dir(
+        self, family_id: str, *, timestamp: str | None = None
+    ) -> Path:
+        """Per-run subdirectory for trader artifacts (bundle, parquet,
+        audit, status, checkpoint, stdout/stderr)."""
+        if timestamp is None:
+            from datetime import datetime, timezone
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = (
+            self.root / "families" / family_id / "paper_forward" / timestamp
+        )
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    # ------------------------------------------------------------------
     # Config hashes (for config guard)
     # ------------------------------------------------------------------
 
