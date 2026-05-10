@@ -22,6 +22,16 @@ A Textual-based terminal UI provides a real-time cockpit: live LLM token streami
 python scripts/run_tui.py --workspace alpha_research
 ```
 
+## Results
+
+![Score trajectories under adversarial coaching](docs/score-trajectories.png)
+
+*Each line traces one research family's composite score across iterations. Star markers = graduated via holdout. Red X = archived. Judges coach every iteration; only qualified improvements survive. The top performer (eth_institutional_momentum_v1, score 2.25) forked from crypto_momentum_v2, inheriting its learnings and graduating in a single iteration.*
+
+![Coaching detail](docs/coaching-detail.png)
+
+*Inside the coaching loop: per-iteration scores with judge verdicts (green = qualified, red = revised), and the vol_compression fork chain showing iterative improvement from v1 (-0.54) through v2 (1.03, holdout passed) to v6 (promoting to paper).*
+
 ## Why Alpha Forge?
 
 Manual quant research suffers from three failure modes:
